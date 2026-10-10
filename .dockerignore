@@ -1,0 +1,14 @@
+# Для сборки образа нужны только исходники и Gradle
+.git
+.github
+.idea
+.claude
+.mcp.json
+**/.gradle
+**/build
+labs
+monitoring
+Dockerfile
+Dockerfile.*
+docker-compose.yml
+*.md

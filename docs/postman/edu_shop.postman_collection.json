@@ -1,0 +1,1714 @@
+{
+  "info": {
+    "_postman_id": "26025f5c-8a99-4f80-9dd5-198e158d9d6e",
+    "name": "edu_shop: заказы и метрики",
+    "description": "Все ручки стенда edu_shop для тестирования и демонстрации лабораторной «Метрики и Prometheus».\n\nПеред запуском поднимите стенд: `docker compose up -d --build`. Адреса заданы в переменных коллекции (вкладка Variables), по умолчанию это порты из `docker-compose.yml` на localhost.\n\nПапки 1–7 можно запустить целиком через Run collection: у каждого запроса есть тесты. Результат PromQL-запросов виден таблицей во вкладке Visualize. Папка «8. Нагрузка» нужна для демонстрации роста очереди, её удобно запускать отдельно с несколькими итерациями.\n\nЕсли меняли `PROCESSING_DELAY_MS`, поменяйте и переменную `processingDelayMs`: от неё зависит, сколько ждёт запрос «Получить заказ после обработки».",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Заказы (API)",
+      "description": "Пользовательские ручки API. Запускайте по порядку: первый запрос сохраняет id созданного заказа в переменную `orderId`, остальные её используют.",
+      "item": [
+        {
+          "name": "Создать заказ",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/orders",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "Создаёт заказ. API сохраняет его в PostgreSQL со статусом NEW и отправляет `order_id` в RabbitMQ. Увеличивает `shop_orders_created_total` и `http_requests_total{method=\"POST\",route=\"/orders\",status=\"201\"}`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1500.00,\n  \"items_count\": 3\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Статус 201 Created', () => pm.response.to.have.status(201));",
+                  "const order = pm.response.json();",
+                  "pm.test('Заказ создан в статусе NEW', () => {",
+                  "    pm.expect(order.status).to.eql('NEW');",
+                  "    pm.expect(order.amount).to.eql(1500);",
+                  "    pm.expect(order.items_count).to.eql(3);",
+                  "    pm.expect(order.processed_at).to.be.null;",
+                  "});",
+                  "pm.test('Location указывает на созданный заказ', () => {",
+                  "    pm.expect(pm.response.headers.get('Location')).to.match(new RegExp(`/orders/${order.id}$`));",
+                  "});",
+                  "pm.collectionVariables.set('orderId', order.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Получить заказ сразу после создания",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{apiUrl}}/orders/{{orderId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{orderId}}"
+              ]
+            },
+            "description": "Заказ ещё ждёт в очереди (NEW) или уже обрабатывается Worker-ом (PROCESSING)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Статус 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Заказ ещё не обработан', () => {",
+                  "    const order = pm.response.json();",
+                  "    pm.expect(order.id).to.eql(Number(pm.collectionVariables.get('orderId')));",
+                  "    pm.expect(order.status).to.be.oneOf(['NEW', 'PROCESSING']);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Получить заказ после обработки",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{apiUrl}}/orders/{{orderId}}",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "orders",
+                "{{orderId}}"
+              ]
+            },
+            "description": "Перед запросом скрипт ждёт `processingDelayMs` + 2 с, за это время Worker переводит заказ в DONE и заполняет `processed_at`. Если в очереди много заказов (например, после папки «Нагрузка»), заказ может не успеть обработаться."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Worker обрабатывает заказ processingDelayMs миллисекунд (PROCESSING_DELAY_MS): ждём с запасом",
+                  "const delay = Number(pm.collectionVariables.get('processingDelayMs')) + 2000;",
+                  "setTimeout(() => {}, delay);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Статус 200', () => pm.response.to.have.status(200));",
+                  "const order = pm.response.json();",
+                  "pm.test('Заказ обработан Worker-ом', () => {",
+                  "    pm.expect(order.status).to.eql('DONE');",
+                  "    pm.expect(order.processed_at).to.be.a('string');",
+                  "    pm.expect(new Date(order.processed_at)).to.be.above(new Date(order.created_at));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Получить все заказы",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{apiUrl}}/orders",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "Список всех заказов, отсортированный по id."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Статус 200', () => pm.response.to.have.status(200));",
+                  "pm.test('В списке есть созданный заказ', () => {",
+                  "    const ids = pm.response.json().map(order => order.id);",
+                  "    pm.expect(ids).to.include(Number(pm.collectionVariables.get('orderId')));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ошибка: невалидный заказ",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/orders",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "Сумма и количество позиций должны быть положительными. API отвечает 400 в формате Problem Details и не создаёт заказ. Такой запрос виден в `http_requests_total` со `status=\"400\"`, но не увеличивает `shop_orders_created_total`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": -1,\n  \"items_count\": 0\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Статус 400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('Ответ в формате Problem Details', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ошибка: несуществующий заказ",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{apiUrl}}/orders/999999999",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "orders",
+                "999999999"
+              ]
+            },
+            "description": "API отвечает 404 в формате Problem Details. В метриках запрос попадает в `route=\"/orders/{id}\"` со `status=\"404\"`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Статус 404 Not Found', () => pm.response.to.have.status(404));",
+                  "pm.test('Ответ в формате Problem Details', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().detail).to.eql('Order 999999999 not found');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Технические ручки API",
+      "description": "Ручки, которые вызывают Docker, Prometheus и собственный exporter.",
+      "item": [
+        {
+          "name": "Проверка доступности",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{apiUrl}}/health",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "По этой ручке Docker проверяет, что API запущено (healthcheck каждые 5 с)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('API запущено', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql('UP');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Статистика заказов (JSON для exporter)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{apiUrl}}/internal/stats",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "internal",
+                "stats"
+              ]
+            },
+            "description": "Обычный JSON, а не Prometheus-метрики. Его читает собственный exporter и превращает в `shop_stats_*`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Статус 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Есть счётчики по статусам и last_processed_at', () => {",
+                  "    const stats = pm.response.json();",
+                  "    ['orders_new', 'orders_processing', 'orders_done'].forEach(field => pm.expect(stats[field], field).to.be.a('number'));",
+                  "    pm.expect(stats).to.have.property('last_processed_at');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Метрики API",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{apiUrl}}/metrics",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
+            "description": "Метрики в формате Prometheus. Свои: `http_requests_total`, `http_request_duration_seconds`, `shop_orders_created_total`. Остальное — метрики JVM от Spring Boot Actuator."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const text = pm.response.text();",
+                  "pm.test('Статус 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Есть метрики, которые считает API', () => {",
+                  "    pm.expect(text).to.include('# TYPE http_requests_total counter');",
+                  "    pm.expect(text).to.include('# TYPE http_request_duration_seconds histogram');",
+                  "    pm.expect(text).to.include('# TYPE shop_orders_created_total counter');",
+                  "});",
+                  "pm.test('Нет дублей: статусы заказов отдаёт только exporter', () => {",
+                  "    pm.expect(text).to.not.include('shop_stats_');",
+                  "    pm.expect(text).to.not.include('http_server_requests');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Worker",
+      "description": "У Worker нет пользовательских ручек, только техническая `/metrics` для Prometheus.",
+      "item": [
+        {
+          "name": "Метрики Worker",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{workerUrl}}/metrics",
+              "host": [
+                "{{workerUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
+            "description": "Гистограмма `shop_order_processing_duration_seconds`: время от получения сообщения из RabbitMQ до перевода заказа в DONE."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const text = pm.response.text();",
+                  "pm.test('Статус 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Есть гистограмма времени обработки заказа', () => {",
+                  "    pm.expect(text).to.include('# TYPE shop_order_processing_duration_seconds histogram');",
+                  "    pm.expect(text).to.include('shop_order_processing_duration_seconds_bucket{le=\"2.0\"}');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Собственный exporter",
+      "description": "Exporter при каждом запросе к `/metrics` вызывает `GET /internal/stats` у API.",
+      "item": [
+        {
+          "name": "Метрики exporter",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{exporterUrl}}/metrics",
+              "host": [
+                "{{exporterUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            },
+            "description": "Поля JSON из `/internal/stats` в виде Gauge-метрик `shop_stats_*`. Если API недоступно, exporter отдаёт только `shop_stats_up 0`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const text = pm.response.text();",
+                  "pm.test('Статус 200', () => pm.response.to.have.status(200));",
+                  "pm.test('API доступно для exporter-а', () => pm.expect(text).to.include('shop_stats_up 1.0'));",
+                  "pm.test('Есть метрики из /internal/stats', () => {",
+                  "    ['shop_stats_orders_new', 'shop_stats_orders_processing', 'shop_stats_orders_done']",
+                  "        .forEach(name => pm.expect(text).to.include(`# TYPE ${name} gauge`));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Prometheus",
+      "description": "Состояние Prometheus и PromQL-запросы из отчёта (docs/metrics.md).",
+      "item": [
+        {
+          "name": "Prometheus запущен",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{prometheusUrl}}/-/healthy",
+              "host": [
+                "{{prometheusUrl}}"
+              ],
+              "path": [
+                "-",
+                "healthy"
+              ]
+            },
+            "description": "Проверка доступности Prometheus."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Prometheus запущен', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Все цели в состоянии UP",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{prometheusUrl}}/api/v1/targets?state=active",
+              "host": [
+                "{{prometheusUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "targets"
+              ],
+              "query": [
+                {
+                  "key": "state",
+                  "value": "active"
+                }
+              ]
+            },
+            "description": "То же, что страница Status → Target health (http://localhost:9090/targets), в виде JSON."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const targets = pm.response.json().data.activeTargets;",
+                  "const required = [\"shop-api\", \"shop-worker\", \"shop-exporter\", \"node\", \"cadvisor\", \"postgres\", \"rabbitmq\"];",
+                  "pm.test('Есть все цели из задания', () => {",
+                  "    const jobs = targets.map(t => t.labels.job);",
+                  "    required.forEach(job => pm.expect(jobs, job).to.include(job));",
+                  "});",
+                  "pm.test('Все цели в состоянии up', () => {",
+                  "    const down = targets.filter(t => t.health !== 'up').map(t => `${t.labels.job}: ${t.lastError}`);",
+                  "    pm.expect(down, down.join('; ')).to.be.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "remote_write в конфигурации",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{prometheusUrl}}/api/v1/status/config",
+              "host": [
+                "{{prometheusUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "status",
+                "config"
+              ]
+            },
+            "description": "Текущая конфигурация Prometheus: в ней должен быть `remote_write` в VictoriaMetrics."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Настроен remote_write в VictoriaMetrics', () => {",
+                  "    const yaml = pm.response.json().data.yaml;",
+                  "    pm.expect(yaml).to.include('remote_write');",
+                  "    pm.expect(yaml).to.include('http://victoriametrics:8428/api/v1/write');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PromQL: вопросы из задания",
+          "description": "Результат каждого запроса виден таблицей во вкладке Visualize.",
+          "item": [
+            {
+              "name": "1. Сколько запросов в секунду получает API",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{prometheusUrl}}/api/v1/query",
+                  "host": [
+                    "{{prometheusUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Прирост счётчика `http_requests_total` в секунду за последнюю минуту, сумма по всем маршрутам и статусам. Даже без пользователей около 0,33 запроса/с: healthcheck Docker, Prometheus и exporter.\n\n```promql\nsum(rate(http_requests_total{job=\"shop-api\"}[1m]))\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "sum(rate(http_requests_total{job=\"shop-api\"}[1m]))",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "1a. Запросы в секунду по маршрутам",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{prometheusUrl}}/api/v1/query",
+                  "host": [
+                    "{{prometheusUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "То же, что запрос 1, с разбивкой по методу и маршруту: видно, сколько трафика пользовательское, а сколько техническое (`/health`, `/metrics`, `/internal/stats`).\n\n```promql\nsum by (method, route) (rate(http_requests_total{job=\"shop-api\"}[1m]))\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "sum by (method, route) (rate(http_requests_total{job=\"shop-api\"}[1m]))",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "2. p95 времени ответа POST /orders",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{prometheusUrl}}/api/v1/query",
+                  "host": [
+                    "{{prometheusUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "95% запросов на создание заказа за последние 5 минут выполнились быстрее этого числа секунд. Если за 5 минут не было ни одного `POST /orders`, результат `NaN`.\n\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"shop-api\", method=\"POST\", route=\"/orders\"}[5m])))\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"shop-api\", method=\"POST\", route=\"/orders\"}[5m])))",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": []
+            },
+            {
+              "name": "3. Сколько памяти использует контейнер API (МиБ)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{prometheusUrl}}/api/v1/query",
+                  "host": [
+                    "{{prometheusUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Рабочий набор памяти контейнера API по данным cAdvisor.\n\n```promql\ncontainer_memory_working_set_bytes{container_label_com_docker_compose_service=\"api\"} / 1024 / 1024\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "container_memory_working_set_bytes{container_label_com_docker_compose_service=\"api\"} / 1024 / 1024",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "4. Сколько сообщений ждут обработки в RabbitMQ",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{prometheusUrl}}/api/v1/query",
+                  "host": [
+                    "{{prometheusUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Сообщения в очереди Worker-а, которые ещё никто не взял. Растёт, если Worker не успевает за API.\n\n```promql\nrabbitmq_queue_messages_ready{job=\"rabbitmq\", queue=\"orders.processing\"}\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "rabbitmq_queue_messages_ready{job=\"rabbitmq\", queue=\"orders.processing\"}",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "5. Сколько заказов в PROCESSING",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{prometheusUrl}}/api/v1/query",
+                  "host": [
+                    "{{prometheusUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Значение от собственного exporter. Worker обрабатывает заказы по одному, поэтому обычно 0 или 1.\n\n```promql\nshop_stats_orders_processing\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "shop_stats_orders_processing",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "6. Сколько секунд прошло с последнего обработанного заказа",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{prometheusUrl}}/api/v1/query",
+                  "host": [
+                    "{{prometheusUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Значение от собственного exporter. Пока ни один заказ не обработан, результат пустой.\n\n```promql\nshop_stats_seconds_since_last_processed\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "shop_stats_seconds_since_last_processed",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": []
+            },
+            {
+              "name": "7. Сколько соединений открыто к PostgreSQL",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{prometheusUrl}}/api/v1/query",
+                  "host": [
+                    "{{prometheusUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Соединения к базе `shop` по данным postgres_exporter: около 20 у пулов HikariCP API и Worker и одно у exporter-а.\n\n```promql\nsum(pg_stat_database_numbackends{datname=\"shop\"})\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "sum(pg_stat_database_numbackends{datname=\"shop\"})",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Доп. p95 времени обработки заказа в Worker",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{prometheusUrl}}/api/v1/query",
+                  "host": [
+                    "{{prometheusUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Близко к `PROCESSING_DELAY_MS`. Если за 5 минут не обработан ни один заказ, результат `NaN`.\n\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(shop_order_processing_duration_seconds_bucket[5m])))\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "histogram_quantile(0.95, sum by (le) (rate(shop_order_processing_duration_seconds_bucket[5m])))",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": []
+            },
+            {
+              "name": "Доп. Загрузка CPU хоста, %",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{prometheusUrl}}/api/v1/query",
+                  "host": [
+                    "{{prometheusUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Доля времени, когда процессоры хоста не простаивали, по данным node_exporter.\n\n```promql\n100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])))\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "100 * (1 - avg(rate(node_cpu_seconds_total{mode=\"idle\"}[1m])))",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Выполняется после каждого запроса папки: проверка ответа и таблица во вкладке Visualize",
+                  "const body = pm.response.json();",
+                  "pm.test('PromQL-запрос выполнен', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(body.status).to.eql('success');",
+                  "});",
+                  "const param = pm.request.body.urlencoded.find(p => p.key === 'query');",
+                  "const rows = (body.data.result || []).map(r => ({",
+                  "    labels: Object.entries(r.metric).map(([k, v]) => `${k}=\"${v}\"`).join(', ') || '{}',",
+                  "    value: r.value ? r.value[1] : ''",
+                  "}));",
+                  "pm.visualizer.set(`",
+                  "<style>",
+                  "  body { font-family: sans-serif; }",
+                  "  pre { background: #f4f4f4; padding: 8px; white-space: pre-wrap; }",
+                  "  table { border-collapse: collapse; font-family: monospace; }",
+                  "  td, th { border: 1px solid #ccc; padding: 4px 8px; text-align: left; }",
+                  "</style>",
+                  "<pre>{{query}}</pre>",
+                  "{{#if rows.length}}",
+                  "<table><tr><th>Метки</th><th>Значение</th></tr>",
+                  "{{#each rows}}<tr><td>{{labels}}</td><td>{{value}}</td></tr>{{/each}}",
+                  "</table>",
+                  "{{else}}<p>Пустой результат</p>{{/if}}",
+                  "`, { query: param ? param.value : '', rows });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PromQL: remote_write работает",
+          "description": "Метрики самого Prometheus об отправке данных в VictoriaMetrics.",
+          "item": [
+            {
+              "name": "Отправлено сэмплов в VictoriaMetrics",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{prometheusUrl}}/api/v1/query",
+                  "host": [
+                    "{{prometheusUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Сколько значений Prometheus отправил через `remote_write` с момента запуска.\n\n```promql\nsum(prometheus_remote_storage_samples_total)\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "sum(prometheus_remote_storage_samples_total)",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);",
+                      "pm.test('Данные отправляются', () => pm.expect(Number(pm.response.json().data.result[0].value[1])).to.be.above(0));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "Ошибок отправки в VictoriaMetrics",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{prometheusUrl}}/api/v1/query",
+                  "host": [
+                    "{{prometheusUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Сколько значений не удалось отправить. Должно быть 0.\n\n```promql\nsum(prometheus_remote_storage_samples_failed_total)\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "sum(prometheus_remote_storage_samples_failed_total)",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);",
+                      "pm.test('Ошибок нет', () => pm.expect(Number(pm.response.json().data.result[0].value[1])).to.eql(0));"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Выполняется после каждого запроса папки: проверка ответа и таблица во вкладке Visualize",
+                  "const body = pm.response.json();",
+                  "pm.test('PromQL-запрос выполнен', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(body.status).to.eql('success');",
+                  "});",
+                  "const param = pm.request.body.urlencoded.find(p => p.key === 'query');",
+                  "const rows = (body.data.result || []).map(r => ({",
+                  "    labels: Object.entries(r.metric).map(([k, v]) => `${k}=\"${v}\"`).join(', ') || '{}',",
+                  "    value: r.value ? r.value[1] : ''",
+                  "}));",
+                  "pm.visualizer.set(`",
+                  "<style>",
+                  "  body { font-family: sans-serif; }",
+                  "  pre { background: #f4f4f4; padding: 8px; white-space: pre-wrap; }",
+                  "  table { border-collapse: collapse; font-family: monospace; }",
+                  "  td, th { border: 1px solid #ccc; padding: 4px 8px; text-align: left; }",
+                  "</style>",
+                  "<pre>{{query}}</pre>",
+                  "{{#if rows.length}}",
+                  "<table><tr><th>Метки</th><th>Значение</th></tr>",
+                  "{{#each rows}}<tr><td>{{labels}}</td><td>{{value}}</td></tr>{{/each}}",
+                  "</table>",
+                  "{{else}}<p>Пустой результат</p>{{/if}}",
+                  "`, { query: param ? param.value : '', rows });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. VictoriaMetrics",
+      "description": "VictoriaMetrics понимает PromQL и тот же HTTP API, что Prometheus. Данные в неё приходят из Prometheus через `remote_write`.",
+      "item": [
+        {
+          "name": "VictoriaMetrics запущена",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{victoriaMetricsUrl}}/health",
+              "host": [
+                "{{victoriaMetricsUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Проверка доступности VictoriaMetrics."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('VictoriaMetrics запущена', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "PromQL: те же запросы",
+          "description": "Те же запросы, что в Prometheus. Значения `rate()` немного отличаются: VictoriaMetrics не экстраполирует их к границам окна, а данные приходят с задержкой в несколько секунд.",
+          "item": [
+            {
+              "name": "Все цели up",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{victoriaMetricsUrl}}/api/v1/query",
+                  "host": [
+                    "{{victoriaMetricsUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Метрика `up` для каждой цели Prometheus: 1, если последний опрос успешен.\n\n```promql\nup\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "up",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);",
+                      "",
+                      "const result = pm.response.json().data.result;",
+                      "pm.test('Данные всех целей дошли через remote_write', () => {",
+                      "    const jobs = result.map(r => r.metric.job);",
+                      "    [\"shop-api\", \"shop-worker\", \"shop-exporter\", \"node\", \"cadvisor\", \"postgres\", \"rabbitmq\"].forEach(job => pm.expect(jobs, job).to.include(job));",
+                      "});",
+                      "pm.test('Все цели up', () => result.forEach(r => pm.expect(r.value[1], r.metric.job).to.eql('1')));"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "1. Сколько запросов в секунду получает API",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{victoriaMetricsUrl}}/api/v1/query",
+                  "host": [
+                    "{{victoriaMetricsUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Прирост счётчика `http_requests_total` в секунду за последнюю минуту, сумма по всем маршрутам и статусам. Даже без пользователей около 0,33 запроса/с: healthcheck Docker, Prometheus и exporter.\n\n```promql\nsum(rate(http_requests_total{job=\"shop-api\"}[1m]))\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "sum(rate(http_requests_total{job=\"shop-api\"}[1m]))",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "1a. Запросы в секунду по маршрутам",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{victoriaMetricsUrl}}/api/v1/query",
+                  "host": [
+                    "{{victoriaMetricsUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "То же, что запрос 1, с разбивкой по методу и маршруту: видно, сколько трафика пользовательское, а сколько техническое (`/health`, `/metrics`, `/internal/stats`).\n\n```promql\nsum by (method, route) (rate(http_requests_total{job=\"shop-api\"}[1m]))\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "sum by (method, route) (rate(http_requests_total{job=\"shop-api\"}[1m]))",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "2. p95 времени ответа POST /orders",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{victoriaMetricsUrl}}/api/v1/query",
+                  "host": [
+                    "{{victoriaMetricsUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "95% запросов на создание заказа за последние 5 минут выполнились быстрее этого числа секунд. Если за 5 минут не было ни одного `POST /orders`, результат `NaN`.\n\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"shop-api\", method=\"POST\", route=\"/orders\"}[5m])))\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"shop-api\", method=\"POST\", route=\"/orders\"}[5m])))",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": []
+            },
+            {
+              "name": "3. Сколько памяти использует контейнер API (МиБ)",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{victoriaMetricsUrl}}/api/v1/query",
+                  "host": [
+                    "{{victoriaMetricsUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Рабочий набор памяти контейнера API по данным cAdvisor.\n\n```promql\ncontainer_memory_working_set_bytes{container_label_com_docker_compose_service=\"api\"} / 1024 / 1024\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "container_memory_working_set_bytes{container_label_com_docker_compose_service=\"api\"} / 1024 / 1024",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "4. Сколько сообщений ждут обработки в RabbitMQ",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{victoriaMetricsUrl}}/api/v1/query",
+                  "host": [
+                    "{{victoriaMetricsUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Сообщения в очереди Worker-а, которые ещё никто не взял. Растёт, если Worker не успевает за API.\n\n```promql\nrabbitmq_queue_messages_ready{job=\"rabbitmq\", queue=\"orders.processing\"}\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "rabbitmq_queue_messages_ready{job=\"rabbitmq\", queue=\"orders.processing\"}",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "5. Сколько заказов в PROCESSING",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{victoriaMetricsUrl}}/api/v1/query",
+                  "host": [
+                    "{{victoriaMetricsUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Значение от собственного exporter. Worker обрабатывает заказы по одному, поэтому обычно 0 или 1.\n\n```promql\nshop_stats_orders_processing\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "shop_stats_orders_processing",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "6. Сколько секунд прошло с последнего обработанного заказа",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{victoriaMetricsUrl}}/api/v1/query",
+                  "host": [
+                    "{{victoriaMetricsUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Значение от собственного exporter. Пока ни один заказ не обработан, результат пустой.\n\n```promql\nshop_stats_seconds_since_last_processed\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "shop_stats_seconds_since_last_processed",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": []
+            },
+            {
+              "name": "7. Сколько соединений открыто к PostgreSQL",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{victoriaMetricsUrl}}/api/v1/query",
+                  "host": [
+                    "{{victoriaMetricsUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "query"
+                  ]
+                },
+                "description": "Соединения к базе `shop` по данным postgres_exporter: около 20 у пулов HikariCP API и Worker и одно у exporter-а.\n\n```promql\nsum(pg_stat_database_numbackends{datname=\"shop\"})\n```",
+                "body": {
+                  "mode": "urlencoded",
+                  "urlencoded": [
+                    {
+                      "key": "query",
+                      "value": "sum(pg_stat_database_numbackends{datname=\"shop\"})",
+                      "type": "text"
+                    }
+                  ]
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test('Есть данные', () => pm.expect(pm.response.json().data.result).to.not.be.empty);"
+                    ]
+                  }
+                }
+              ]
+            }
+          ],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Выполняется после каждого запроса папки: проверка ответа и таблица во вкладке Visualize",
+                  "const body = pm.response.json();",
+                  "pm.test('PromQL-запрос выполнен', () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(body.status).to.eql('success');",
+                  "});",
+                  "const param = pm.request.body.urlencoded.find(p => p.key === 'query');",
+                  "const rows = (body.data.result || []).map(r => ({",
+                  "    labels: Object.entries(r.metric).map(([k, v]) => `${k}=\"${v}\"`).join(', ') || '{}',",
+                  "    value: r.value ? r.value[1] : ''",
+                  "}));",
+                  "pm.visualizer.set(`",
+                  "<style>",
+                  "  body { font-family: sans-serif; }",
+                  "  pre { background: #f4f4f4; padding: 8px; white-space: pre-wrap; }",
+                  "  table { border-collapse: collapse; font-family: monospace; }",
+                  "  td, th { border: 1px solid #ccc; padding: 4px 8px; text-align: left; }",
+                  "</style>",
+                  "<pre>{{query}}</pre>",
+                  "{{#if rows.length}}",
+                  "<table><tr><th>Метки</th><th>Значение</th></tr>",
+                  "{{#each rows}}<tr><td>{{labels}}</td><td>{{value}}</td></tr>{{/each}}",
+                  "</table>",
+                  "{{else}}<p>Пустой результат</p>{{/if}}",
+                  "`, { query: param ? param.value : '', rows });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "7. RabbitMQ и cAdvisor",
+      "description": "Ручки инфраструктуры, опубликованные на хост. node_exporter и postgres_exporter наружу не опубликованы, их метрики видны в Prometheus.",
+      "item": [
+        {
+          "name": "Очередь заказов в RabbitMQ",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{rabbitmqUrl}}/api/queues/%2F/orders.processing",
+              "host": [
+                "{{rabbitmqUrl}}"
+              ],
+              "path": [
+                "api",
+                "queues",
+                "%2F",
+                "orders.processing"
+              ]
+            },
+            "description": "Management API RabbitMQ: сколько сообщений ждёт (`messages_ready`), взято Worker-ом (`messages_unacknowledged`) и сколько потребителей у очереди. В Prometheus это `rabbitmq_queue_messages_ready`, `rabbitmq_queue_messages_unacked`, `rabbitmq_queue_consumers`.",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{rabbitmqUser}}",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "{{rabbitmqPassword}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Статус 200', () => pm.response.to.have.status(200));",
+                  "const queue = pm.response.json();",
+                  "pm.test('Worker подписан на очередь', () => pm.expect(queue.consumers).to.be.at.least(1));",
+                  "console.log(`ready=${queue.messages_ready} unacked=${queue.messages_unacknowledged} consumers=${queue.consumers}`);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "cAdvisor запущен",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{cadvisorUrl}}/healthz",
+              "host": [
+                "{{cadvisorUrl}}"
+              ],
+              "path": [
+                "healthz"
+              ]
+            },
+            "description": "Проверка доступности cAdvisor."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('cAdvisor запущен', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "8. Нагрузка",
+      "description": "Генерация заказов для демонстрации. Запустите папку через Collection Runner, например 30 итераций без задержки. Заказы создаются быстрее, чем Worker их обрабатывает (`PROCESSING_DELAY_MS` на заказ), поэтому через 15–30 с в Prometheus видно, как растут `rabbitmq_queue_messages_ready` и `shop_stats_orders_new`, а потом очередь разбирается.",
+      "item": [
+        {
+          "name": "Создать случайный заказ",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{apiUrl}}/orders",
+              "host": [
+                "{{apiUrl}}"
+              ],
+              "path": [
+                "orders"
+              ]
+            },
+            "description": "Сумма и количество позиций выбираются случайно перед каждым запросом.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": {{randomAmount}},\n  \"items_count\": {{randomItemsCount}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('randomAmount', (1 + Math.random() * 9999).toFixed(2));",
+                  "pm.collectionVariables.set('randomItemsCount', 1 + Math.floor(Math.random() * 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Статус 201 Created', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "apiUrl",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "workerUrl",
+      "value": "http://localhost:9101"
+    },
+    {
+      "key": "exporterUrl",
+      "value": "http://localhost:9102"
+    },
+    {
+      "key": "prometheusUrl",
+      "value": "http://localhost:9090"
+    },
+    {
+      "key": "victoriaMetricsUrl",
+      "value": "http://localhost:8428"
+    },
+    {
+      "key": "rabbitmqUrl",
+      "value": "http://localhost:15672"
+    },
+    {
+      "key": "rabbitmqUser",
+      "value": "shop"
+    },
+    {
+      "key": "rabbitmqPassword",
+      "value": "shop"
+    },
+    {
+      "key": "cadvisorUrl",
+      "value": "http://localhost:8081"
+    },
+    {
+      "key": "processingDelayMs",
+      "value": "2000"
+    },
+    {
+      "key": "orderId",
+      "value": ""
+    },
+    {
+      "key": "randomAmount",
+      "value": ""
+    },
+    {
+      "key": "randomItemsCount",
+      "value": ""
+    }
+  ]
+}

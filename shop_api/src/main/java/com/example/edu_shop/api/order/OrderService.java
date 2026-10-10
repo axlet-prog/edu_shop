@@ -5,6 +5,8 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 
+import io.prometheus.metrics.core.metrics.Counter;
+import io.prometheus.metrics.model.registry.PrometheusRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -25,15 +27,21 @@ public class OrderService {
 
 	private final RabbitTemplate rabbitTemplate;
 
-	public OrderService(OrderRepository orders, RabbitTemplate rabbitTemplate) {
+	private final Counter ordersCreated;
+
+	public OrderService(OrderRepository orders, RabbitTemplate rabbitTemplate, PrometheusRegistry registry) {
 		this.orders = orders;
 		this.rabbitTemplate = rabbitTemplate;
+		this.ordersCreated = Counter.builder()
+				.name("shop_orders_created_total")
+				.help("Orders created since API start")
+				.register(registry);
 	}
 
 	/**
 	 * Сначала заказ сохраняется (и коммитится) в PostgreSQL, и только потом уходит сообщение в RabbitMQ,
 	 * поэтому Worker всегда найдёт заказ в базе. Если RabbitMQ недоступен, запрос завершится ошибкой,
-	 * а заказ останется в статусе NEW.
+	 * а заказ останется в статусе NEW. Такой заказ не учитывается в shop_orders_created_total.
 	 */
 	public Order create(BigDecimal amount, int itemsCount) {
 		// Приводим значения к тому виду, в котором их вернёт PostgreSQL: NUMERIC(12, 2) и микросекунды
@@ -42,6 +50,7 @@ public class OrderService {
 		Order order = orders.save(Order.newOrder(normalizedAmount, itemsCount, now));
 		rabbitTemplate.convertAndSend(OrderMessaging.EXCHANGE, OrderMessaging.ROUTING_KEY,
 				new OrderCreatedMessage(order.id()));
+		ordersCreated.inc();
 		log.info("Order {} created", order.id());
 		return order;
 	}

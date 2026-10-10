@@ -13,8 +13,15 @@ java {
 
 dependencies {
 	implementation(project(":shop_common"))
+	// Веб-сервер нужен только для технической ручки /metrics, пользовательских HTTP-ручек у Worker нет
+	implementation("org.springframework.boot:spring-boot-starter-webmvc")
+	// Actuator отдаёт /metrics. Свои метрики пишем клиентом Prometheus, Micrometer добавляет метрики JVM
+	implementation("org.springframework.boot:spring-boot-starter-actuator")
+	implementation("io.micrometer:micrometer-registry-prometheus")
+	implementation("io.prometheus:prometheus-metrics-core")
 	runtimeOnly("org.postgresql:postgresql")
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
+	testImplementation("io.prometheus:prometheus-metrics-exposition-textformats")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 

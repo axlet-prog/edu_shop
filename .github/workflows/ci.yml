@@ -81,3 +81,125 @@ jobs:
             */build/reports/tests/test/
             */build/reports/jacoco/test/
           retention-days: 14
+
+  image:
+    name: Image (${{ matrix.service }})
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Публикация в ghcr.io токеном GITHUB_TOKEN
+      packages: write
+
+    strategy:
+      # Отчёт Trivy и SBOM нужны по каждому образу, даже если другой образ не прошёл Quality Gate
+      fail-fast: false
+      matrix:
+        include:
+          - service: api
+            module: shop_api
+            port: 8080
+          - service: worker
+            module: shop_worker
+            port: 9101
+          - service: exporter
+            module: shop_exporter
+            port: 9102
+
+    env:
+      SERVICE: ${{ matrix.service }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Image name and short SHA
+        run: |
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/${SERVICE}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build image (no push) with layer cache
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          build-args: |
+            MODULE=${{ matrix.module }}
+            PORT=${{ matrix.port }}
+          push: false
+          load: true
+          tags: |
+            ${{ env.IMAGE }}:${{ env.SHORT_SHA }}
+            ${{ env.IMAGE }}:build-${{ github.run_number }}
+          # source связывает пакет в GHCR с репозиторием, revision — полный хэш коммита
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Set up Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.75.0
+          cache: true
+
+      # Полный отчёт: все уровни критичности, без порога, поэтому шаг не падает.
+      # Отчёт выгружается в артефакт, даже если следующие шаги упадут
+      - name: Trivy full report
+        run: trivy image --format table --output "trivy-report-${SERVICE}.txt" "${IMAGE}:${SHORT_SHA}"
+
+      # SBOM в формате CycloneDX: все пакеты образа (Alpine и jar-зависимости) с версиями и purl
+      - name: Generate SBOM (CycloneDX)
+        run: trivy image --format cyclonedx --output "sbom-${SERVICE}.cdx.json" "${IMAGE}:${SHORT_SHA}"
+
+      # Quality Gate: Pipeline останавливается, если в образе есть уязвимость HIGH или CRITICAL,
+      # для которой уже выпущено исправление. --ignore-unfixed отбрасывает уязвимости без патча:
+      # их нельзя устранить обновлением, и они валили бы почти каждую сборку
+      - name: Trivy quality gate (HIGH, CRITICAL with fix)
+        run: trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "${IMAGE}:${SHORT_SHA}"
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-report-${{ matrix.service }}
+          path: trivy-report-${{ matrix.service }}.txt
+          retention-days: 14
+
+      # SBOM хранится дольше отчёта: по нему проверяют, есть ли в уже выпущенном образе библиотека
+      # с новой уязвимостью, не сканируя образ заново
+      - name: Upload SBOM
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom-${{ matrix.service }}
+          path: sbom-${{ matrix.service }}.cdx.json
+          retention-days: 90
+
+      # Публикуется только main: на Pull Request образ собирается и проверяется, но в реестр не попадает.
+      # Без always() шаг выполняется только при успехе предыдущих, то есть после Quality Gate
+      - name: Log in to GitHub Container Registry
+        if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Публикуется тот самый образ, который проверил Trivy: он уже есть в Docker Engine (load: true),
+      # пересобирать его не нужно. --all-tags отправляет оба тега, у них один и тот же digest
+      - name: Push image
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker push --all-tags "$IMAGE"
+          {
+            echo "### Published image: ${SERVICE}"
+            echo
+            echo "- \`${IMAGE}:${SHORT_SHA}\`"
+            echo "- \`${IMAGE}:build-${GITHUB_RUN_NUMBER}\`"
+            echo "- digest: \`$(docker inspect --format '{{index .RepoDigests 0}}' "${IMAGE}:${SHORT_SHA}")\`"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
