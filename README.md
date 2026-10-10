@@ -30,7 +30,8 @@
 ## Запуск стенда в Docker
 
 `docker-compose.yml` поднимает всё сразу: API, Worker, exporter, PostgreSQL, RabbitMQ и мониторинг.
-Образы своих компонентов собираются из одного [`Dockerfile`](Dockerfile), модуль задаёт аргумент `MODULE`.
+Образы своих компонентов собираются из одного [`Dockerfile`](Dockerfile), модуль задаёт аргумент `MODULE`
+(см. [Docker-образы](#docker-образы)).
 
 ```bash
 docker compose up -d --build
@@ -50,7 +51,7 @@ docker compose down        # остановить; с флагом -v удаля
 | http://localhost:8081           | cAdvisor                                         |
 
 Первая сборка образов занимает несколько минут: Gradle скачивает дистрибутив и зависимости.
-Дальше они берутся из кэша BuildKit.
+Дальше, пока не меняются сборочные скрипты и `gradle.lockfile`, они берутся из кэша слоёв.
 
 ## Запуск локально
 
@@ -91,6 +92,48 @@ docker run -d --name shop-rabbitmq -p 5672:5672 -p 15672:15672 \
 ```bash
 ./gradlew resolveDependencies --write-locks
 ```
+
+## Docker-образы
+
+[`Dockerfile`](Dockerfile) многоступенчатый:
+
+- стадия `build` (`eclipse-temurin:25-jdk`) собирает `bootJar`. Файлы копируются от редко меняющихся
+  к часто меняющимся: Gradle Wrapper, затем сборочные скрипты с `gradle.lockfile` и скачивание зависимостей,
+  и только потом `src/main`. Поэтому при изменении кода слой с зависимостями берётся из кэша;
+- рабочая стадия (`eclipse-temurin:25-jre-alpine`) содержит только JRE и приложение, разложенное по слоям
+  Spring Boot: сторонние зависимости отдельно, код приложения отдельно. Процесс запускается
+  от непривилегированного пользователя `app`.
+
+```bash
+docker build --build-arg MODULE=shop_api --build-arg PORT=8080 -t edu-shop/api:local .
+docker run --rm -p 8080:8080 -e DB_HOST=... -e RABBITMQ_HOST=... edu-shop/api:local
+```
+
+`Dockerfile.singlestage` — однослойный вариант, только для сравнения размера (1.38 ГБ против 268 МБ у API).
+
+После `CI / Lint, test, build` пайплайн запускает job `Image` для каждого сервиса (api, worker, exporter):
+
+| Шаг              | Что делает                                                                                 |
+|------------------|--------------------------------------------------------------------------------------------|
+| Сборка образа    | `docker/build-push-action` с кэшем слоёв в кэше GitHub Actions (`type=gha`, свой `scope` у сервиса) |
+| Отчёт Trivy      | Все уязвимости всех уровней, артефакт `trivy-report-<сервис>`                             |
+| SBOM             | CycloneDX (`trivy image --format cyclonedx`), артефакт `sbom-<сервис>`                    |
+| Quality Gate     | `trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1`                      |
+| Публикация       | Только из `main` и только после Quality Gate: `docker push` в GHCR                        |
+
+Образы публикуются как `ghcr.io/axlet-prog/edu_shop/<сервис>` с двумя тегами на один digest:
+короткий хэш коммита (`${GITHUB_SHA::7}`, например `3ede026`) и номер сборки (`build-42`). Тега `latest` нет:
+каждый тег однозначно указывает на коммит или запуск пайплайна.
+
+Проверить образ локально так же, как в CI:
+
+```bash
+trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 edu-shop/api:local
+trivy image --format cyclonedx --output sbom-api.cdx.json edu-shop/api:local
+```
+
+Если Quality Gate находит уязвимость в зависимости из BOM Spring Boot, а новой версии Spring Boot ещё нет,
+версию можно поднять свойством в `gradle.properties` (например, `tomcat.version`) и обновить lock-файлы.
 
 ## HTTP API (порт 8080)
 
