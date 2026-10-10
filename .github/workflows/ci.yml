@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Новый push в PR отменяет устаревший запуск; запуски на main доводятся до конца
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    name: Lint, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # cache: gradle кэширует ~/.gradle/caches и ~/.gradle/wrapper. Ключ кэша строится по хэшу файлов
+      # из cache-dependency-path, поэтому кэш обновляется только при изменении зависимостей.
+      - name: Set up JDK 25 with Gradle cache
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+          cache: gradle
+          cache-dependency-path: |
+            **/gradle.lockfile
+            **/*.gradle.kts
+            **/gradle.properties
+            **/gradle-wrapper.properties
+
+      - name: Install dependencies (strictly by gradle.lockfile)
+        run: ./gradlew resolveDependencies
+
+      - name: Lint (Checkstyle)
+        run: ./gradlew checkstyleMain checkstyleTest
+
+      # Quality Gate встроен в шаг: jacocoTestCoverageVerification завершается с ошибкой,
+      # если покрытие строк или ветвлений в любом модуле ниже 80%
+      - name: Tests with coverage gate (JaCoCo, 80%)
+        run: ./gradlew test jacocoTestCoverageVerification
+
+      - name: Build (executable jars)
+        run: ./gradlew assemble
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          {
+            echo "### Test coverage (JaCoCo, minimum 80%)"
+            echo
+            echo "| Module | Lines | Branches |"
+            echo "|--------|------:|---------:|"
+            for csv in */build/reports/jacoco/test/jacocoTestReport.csv; do
+              [ -f "$csv" ] || continue
+              awk -F, -v module="${csv%%/*}" '
+                NR > 1 { bm += $6; bc += $7; lm += $8; lc += $9 }
+                END {
+                  lines = (lm + lc) ? sprintf("%.1f%% (%d/%d)", 100 * lc / (lm + lc), lc, lm + lc) : "n/a"
+                  branches = (bm + bc) ? sprintf("%.1f%% (%d/%d)", 100 * bc / (bm + bc), bc, bm + bc) : "n/a"
+                  printf "| %s | %s | %s |\n", module, lines, branches
+                }' "$csv"
+            done
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test and coverage reports
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-reports
+          path: |
+            */build/reports/tests/test/
+            */build/reports/jacoco/test/
+          retention-days: 14

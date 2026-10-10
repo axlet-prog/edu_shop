@@ -36,7 +36,31 @@ docker run -d --name shop-rabbitmq -p 5672:5672 -p 15672:15672 \
 ./gradlew :shop_worker:bootRun   # в другом терминале
 ```
 
-Сборка исполняемых jar: `./gradlew build`. Результат: `shop_api/build/libs/shop_api-*.jar` и `shop_worker/build/libs/shop_worker-*.jar`.
+Сборка исполняемых jar: `./gradlew assemble`. Результат: `shop_api/build/libs/shop_api.jar` и `shop_worker/build/libs/shop_worker.jar`.
+`./gradlew build` дополнительно запускает линтер и тесты (см. [CI](#ci)).
+
+## CI
+
+Пайплайн GitHub Actions (`.github/workflows/ci.yml`) запускается на push в `main` и на Pull Request в `main`.
+Шаги выполняются по порядку, и сбой любого из них останавливает пайплайн:
+
+| Шаг                    | Команда                                         | Что делает                                                        |
+|------------------------|-------------------------------------------------|-------------------------------------------------------------------|
+| Установка зависимостей | `./gradlew resolveDependencies`                 | Скачивает зависимости строго по `gradle.lockfile`                 |
+| Линтер                 | `./gradlew checkstyleMain checkstyleTest`       | Проверяет код по правилам `config/checkstyle/checkstyle.xml`      |
+| Тесты с покрытием      | `./gradlew test jacocoTestCoverageVerification` | JUnit + JaCoCo: покрытие строк и ветвлений в каждом модуле ≥ 80%  |
+| Сборка                 | `./gradlew assemble`                            | Собирает исполняемые jar API и Worker                             |
+
+Те же команды работают локально. `OrderApiIntegrationTest` поднимает PostgreSQL и RabbitMQ через Testcontainers,
+поэтому для тестов нужен запущенный Docker. Отчёты лежат в `*/build/reports/tests/test/index.html` и
+`*/build/reports/jacoco/test/html/index.html`, в CI они сохраняются в артефакт `test-reports`.
+
+Версии зависимостей зафиксированы в `gradle.lockfile` каждого модуля. После изменения зависимостей
+обновите lock-файлы и закоммитьте их вместе с изменением:
+
+```bash
+./gradlew resolveDependencies --write-locks
+```
 
 ## HTTP API (порт 8080)
 
