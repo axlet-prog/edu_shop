@@ -28,8 +28,6 @@ dependencies {
 	testImplementation("org.testcontainers:testcontainers-postgresql")
 	testImplementation("org.testcontainers:testcontainers-rabbitmq")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-
-	implementation("org.springframework.boot:spring-boot-starter-integration")
 }
 
 // Имя без версии, чтобы скрипты запуска и Dockerfile не зависели от версии проекта
