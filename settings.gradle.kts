@@ -6,4 +6,4 @@ dependencyResolutionManagement {
 	}
 }
 
-include("shop_common", "shop_api", "shop_worker")
+include("shop_common", "shop_api", "shop_worker", "shop_exporter")

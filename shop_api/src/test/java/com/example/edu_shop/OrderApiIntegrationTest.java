@@ -26,8 +26,11 @@ import com.example.edu_shop.order.OrderRepository;
 import com.example.edu_shop.order.OrderStatus;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -109,6 +112,25 @@ class OrderApiIntegrationTest {
 				.andExpect(jsonPath("$.orders_processing").value(1))
 				.andExpect(jsonPath("$.orders_done").value(1))
 				.andExpect(jsonPath("$.last_processed_at").value(processedAt.toString()));
+	}
+
+	@Test
+	void metricsEndpointExposesHttpAndOrderMetricsForPrometheus() throws Exception {
+		mvc.perform(post("/orders").contentType(MediaType.APPLICATION_JSON).content("""
+				{"amount": 1500.00, "items_count": 3}
+				"""))
+				.andExpect(status().isCreated());
+
+		mvc.perform(get("/metrics"))
+				.andExpect(status().isOk())
+				.andExpect(content().string(containsString("# TYPE shop_orders_created_total counter")))
+				.andExpect(content().string(containsString(
+						"http_requests_total{method=\"POST\",route=\"/orders\",status=\"201\"}")))
+				.andExpect(content().string(containsString("# TYPE http_request_duration_seconds histogram")))
+				// Встроенная метрика Spring отключена, чтобы HTTP-метрики не дублировались
+				.andExpect(content().string(not(containsString("http_server_requests"))))
+				// Метрики RabbitMQ отдаёт сам брокер, клиентские метрики с теми же именами отключены
+				.andExpect(content().string(not(containsString("rabbitmq_connections"))));
 	}
 
 }

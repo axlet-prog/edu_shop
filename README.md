@@ -13,6 +13,8 @@
    и переводит заказ в `DONE`, заполняя `processed_at`.
 
 Стек: Java 25, Spring Boot 4, Spring Data JDBC, Liquibase, PostgreSQL, RabbitMQ.
+Мониторинг: Prometheus, VictoriaMetrics, node_exporter, cAdvisor, postgres_exporter, rabbitmq_prometheus
+и собственный exporter (см. [Метрики](#метрики)).
 
 ## Модули
 
@@ -20,9 +22,35 @@
 |---------------|--------------------------------------------------------------------------------|
 | `shop_common` | Сущность `Order`, `OrderRepository`, топология RabbitMQ и формат сообщения      |
 | `shop_api`    | HTTP API и миграции Liquibase (`shop_api/src/main/resources/db/changelog`)      |
-| `shop_worker` | Фоновый обработчик очереди, HTTP-запросы не принимает                           |
+| `shop_worker` | Фоновый обработчик очереди. Пользовательских HTTP-ручек нет, только `/metrics`  |
+| `shop_exporter` | Собственный exporter: переводит JSON из `GET /internal/stats` в Prometheus-метрики |
 
 Схему БД создаёт только API (Liquibase при старте), поэтому Worker нужно запускать после API.
+
+## Запуск стенда в Docker
+
+`docker-compose.yml` поднимает всё сразу: API, Worker, exporter, PostgreSQL, RabbitMQ и мониторинг.
+Образы своих компонентов собираются из одного [`Dockerfile`](Dockerfile), модуль задаёт аргумент `MODULE`.
+
+```bash
+docker compose up -d --build
+docker compose ps          # api и worker стартуют после healthcheck PostgreSQL, RabbitMQ и API
+docker compose down        # остановить; с флагом -v удалятся и данные
+```
+
+| Адрес                           | Что там                                          |
+|---------------------------------|--------------------------------------------------|
+| http://localhost:8080           | API                                              |
+| http://localhost:8080/metrics   | Метрики API                                      |
+| http://localhost:9101/metrics   | Метрики Worker                                   |
+| http://localhost:9102/metrics   | Метрики собственного exporter                    |
+| http://localhost:9090/targets   | Prometheus: состояние всех целей                 |
+| http://localhost:8428/vmui      | VictoriaMetrics: те же метрики через `remote_write` |
+| http://localhost:15672          | RabbitMQ Management (`shop` / `shop`)            |
+| http://localhost:8081           | cAdvisor                                         |
+
+Первая сборка образов занимает несколько минут: Gradle скачивает дистрибутив и зависимости.
+Дальше они берутся из кэша BuildKit.
 
 ## Запуск локально
 
@@ -33,10 +61,12 @@ docker run -d --name shop-rabbitmq -p 5672:5672 -p 15672:15672 \
   -e RABBITMQ_DEFAULT_USER=shop -e RABBITMQ_DEFAULT_PASS=shop rabbitmq:4-management-alpine
 
 ./gradlew :shop_api:bootRun
-./gradlew :shop_worker:bootRun   # в другом терминале
+./gradlew :shop_worker:bootRun     # в другом терминале
+./gradlew :shop_exporter:bootRun   # по желанию, в третьем
 ```
 
-Сборка исполняемых jar: `./gradlew assemble`. Результат: `shop_api/build/libs/shop_api.jar` и `shop_worker/build/libs/shop_worker.jar`.
+Сборка исполняемых jar: `./gradlew assemble`. Результат: `shop_api.jar`, `shop_worker.jar` и `shop_exporter.jar`
+в `*/build/libs/`.
 `./gradlew build` дополнительно запускает линтер и тесты (см. [CI](#ci)).
 
 ## CI
@@ -49,7 +79,7 @@ docker run -d --name shop-rabbitmq -p 5672:5672 -p 15672:15672 \
 | Установка зависимостей | `./gradlew resolveDependencies`                 | Скачивает зависимости строго по `gradle.lockfile`                 |
 | Линтер                 | `./gradlew checkstyleMain checkstyleTest`       | Проверяет код по правилам `config/checkstyle/checkstyle.xml`      |
 | Тесты с покрытием      | `./gradlew test jacocoTestCoverageVerification` | JUnit + JaCoCo: покрытие строк и ветвлений в каждом модуле ≥ 80%  |
-| Сборка                 | `./gradlew assemble`                            | Собирает исполняемые jar API и Worker                             |
+| Сборка                 | `./gradlew assemble`                            | Собирает исполняемые jar API, Worker и exporter                   |
 
 Те же команды работают локально. `OrderApiIntegrationTest` поднимает PostgreSQL и RabbitMQ через Testcontainers,
 поэтому для тестов нужен запущенный Docker. Отчёты лежат в `*/build/reports/tests/test/index.html` и
@@ -71,6 +101,7 @@ docker run -d --name shop-rabbitmq -p 5672:5672 -p 15672:15672 \
 | `GET /orders`          | Получить все заказы                                         |
 | `GET /health`          | Проверить, что API запущено                                 |
 | `GET /internal/stats`  | Количество заказов по статусам и `last_processed_at` в JSON |
+| `GET /metrics`         | Метрики API в формате Prometheus                            |
 
 ```bash
 curl -i -X POST localhost:8080/orders -H 'Content-Type: application/json' \
@@ -81,6 +112,15 @@ curl localhost:8080/internal/stats
 
 Ошибки возвращаются в формате [Problem Details](https://www.rfc-editor.org/rfc/rfc9457): ответ 400 при невалидном
 запросе и 404, если заказ не найден.
+
+Postman-коллекция со всеми ручками стенда, тестами и PromQL-запросами:
+[`docs/postman/edu_shop.postman_collection.json`](docs/postman/edu_shop.postman_collection.json)
+(Import → File). Без Postman её можно запустить через Newman:
+
+```bash
+docker run --rm --network host -v "$PWD/docs/postman:/etc/newman:ro" \
+  postman/newman:6.1.3-alpine run edu_shop.postman_collection.json
+```
 
 ## RabbitMQ
 
@@ -94,6 +134,21 @@ Worker берёт сообщения по одному (`prefetch: 1`). Если
 в очереди как `messages_ready`. Если Worker упал посреди обработки, RabbitMQ доставит сообщение повторно,
 и заказ будет обработан заново.
 
+## Метрики
+
+| Компонент            | Ручка            | Метрики                                                                          |
+|----------------------|------------------|----------------------------------------------------------------------------------|
+| API                  | `:8080/metrics`  | `http_requests_total`, `http_request_duration_seconds`, `shop_orders_created_total` |
+| Worker               | `:9101/metrics`  | `shop_order_processing_duration_seconds`                                         |
+| Собственный exporter | `:9102/metrics`  | `shop_stats_orders_new`, `shop_stats_orders_processing`, `shop_stats_orders_done`, `shop_stats_seconds_since_last_processed`, `shop_stats_up` |
+
+Метрики API и Worker считает их код (клиент Prometheus `prometheus-metrics-core`), метрики JVM добавляет
+Spring Boot Actuator. Exporter при каждом запросе Prometheus вызывает `GET /internal/stats` у API.
+Prometheus (конфигурация в [`monitoring/prometheus/prometheus.yml`](monitoring/prometheus/prometheus.yml))
+опрашивает эти ручки и готовые exporter-ы инфраструктуры и копирует всё в VictoriaMetrics через `remote_write`.
+
+Описание всех метрик, PromQL-запросы и сравнение подходов: [docs/metrics.md](docs/metrics.md).
+
 ## Переменные окружения
 
 | Переменная              | По умолчанию | Где используется |
@@ -105,3 +160,6 @@ Worker берёт сообщения по одному (`prefetch: 1`). Если
 | `RABBITMQ_USER` / `RABBITMQ_PASSWORD` | `shop` / `shop` | API, Worker |
 | `API_PORT`              | `8080`       | API              |
 | `PROCESSING_DELAY_MS`   | `2000`       | Worker: сколько миллисекунд обрабатывается один заказ |
+| `METRICS_PORT`          | `9101`       | Worker: порт ручки `/metrics` |
+| `EXPORTER_PORT`         | `9102`       | Exporter: порт ручки `/metrics` |
+| `SHOP_API_URL`          | `http://localhost:8080` | Exporter: адрес API, у которого он запрашивает `/internal/stats` |

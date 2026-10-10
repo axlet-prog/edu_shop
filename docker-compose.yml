@@ -1,0 +1,171 @@
+# Весь стенд: приложение, его инфраструктура и мониторинг.
+#   docker compose up -d --build
+# Prometheus: http://localhost:9090/targets, VictoriaMetrics: http://localhost:8428/vmui
+
+x-app-env: &app-env
+  DB_HOST: postgres
+  DB_NAME: shop
+  DB_USER: shop
+  DB_PASSWORD: shop
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_USER: shop
+  RABBITMQ_PASSWORD: shop
+
+services:
+  # --- Приложение ---
+
+  api:
+    build:
+      context: .
+      args:
+        MODULE: shop_api
+    image: edu-shop/api
+    environment: *app-env
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+
+  worker:
+    build:
+      context: .
+      args:
+        MODULE: shop_worker
+    image: edu-shop/worker
+    environment:
+      <<: *app-env
+      # Задержку обработки можно поменять при запуске: PROCESSING_DELAY_MS=10000 docker compose up -d worker
+      PROCESSING_DELAY_MS: ${PROCESSING_DELAY_MS:-2000}
+    ports:
+      - "9101:9101"
+    depends_on:
+      # Схему БД создаёт API (Liquibase), поэтому Worker стартует после него
+      api:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  exporter:
+    build:
+      context: .
+      args:
+        MODULE: shop_exporter
+    image: edu-shop/exporter
+    environment:
+      SHOP_API_URL: http://api:8080
+    ports:
+      - "9102:9102"
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: shop
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: shop
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "shop", "-d", "shop"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    # В образе уже включены плагины rabbitmq_management (UI на 15672) и rabbitmq_prometheus (метрики на 15692)
+    image: rabbitmq:4-management-alpine
+    # RabbitMQ хранит данные в каталоге, названном по имени хоста, поэтому имя фиксируем
+    hostname: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: shop
+      RABBITMQ_DEFAULT_PASS: shop
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    ports:
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # --- Мониторинг ---
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # Долгое хранение берёт на себя VictoriaMetrics
+      - --storage.tsdb.retention.time=2d
+      # POST /-/reload перечитывает prometheus.yml без перезапуска
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.153.0
+    command:
+      - -storageDataPath=/storage
+      - -retentionPeriod=90d
+    volumes:
+      - victoriametrics-data:/storage
+    ports:
+      - "8428:8428"
+
+  # Метрики хоста: CPU, память, диски. Корень хоста смонтирован в /host только на чтение
+  node-exporter:
+    image: prom/node-exporter:v1.12.1
+    command:
+      - --path.rootfs=/host
+    pid: host
+    volumes:
+      - /:/host:ro,rslave
+
+  # Метрики контейнеров: CPU, память и сеть каждого контейнера
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.6
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=10s
+      # Из меток контейнеров нужна только compose-служба: по ней удобно фильтровать (api, worker, ...)
+      - --store_container_labels=false
+      - --whitelisted_container_labels=com.docker.compose.service
+    privileged: true
+    devices:
+      - /dev/kmsg
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "8081:8080"
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.20.1
+    environment:
+      DATA_SOURCE_URI: postgres:5432/shop?sslmode=disable
+      DATA_SOURCE_USER: shop
+      DATA_SOURCE_PASS: shop
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
+  prometheus-data:
+  victoriametrics-data:
