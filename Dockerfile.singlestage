@@ -1,0 +1,8 @@
+# Однослойный вариант только для сравнения размера с multi-stage сборкой из Dockerfile, в CI не используется:
+#   docker build -t edu-shop/api:singlestage -f Dockerfile.singlestage .
+FROM eclipse-temurin:25-jdk
+WORKDIR /app
+COPY . .
+RUN ./gradlew :shop_api:bootJar --no-daemon --console=plain
+EXPOSE 8080
+CMD ["java", "-jar", "shop_api/build/libs/shop_api.jar"]
