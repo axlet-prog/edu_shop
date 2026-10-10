@@ -82,9 +82,6 @@ jobs:
             */build/reports/jacoco/test/
           retention-days: 14
 
-  # Образ каждого сервиса собирается, проверяется Trivy и только потом публикуется в GHCR.
-  # Сторонние действия закреплены по SHA коммита, а не по тегу: тег можно переписать. В марте 2026 так
-  # подменили теги aquasecurity/trivy-action и aquasecurity/setup-trivy (CVE-2026-33634)
   image:
     name: Image (${{ matrix.service }})
     needs: ci
@@ -117,24 +114,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # Тег — короткий хэш коммита, ровно 7 символов. git rev-parse --short не подходит: Git удлиняет хэш,
-      # если 7 символов неоднозначны. Полное имя образа реестр принимает только в нижнем регистре,
-      # поэтому ${GITHUB_REPOSITORY,,}: в имени владельца или репозитория могут быть заглавные буквы
       - name: Image name and short SHA
         run: |
           echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/${SERVICE}" >> "$GITHUB_ENV"
 
-      # Runner GitHub Actions — виртуальная машина с Docker Engine, поэтому docker build работает без
-      # Docker-in-Docker. Buildx с драйвером docker-container нужен для экспорта кэша слоёв (type=gha)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      # push: false, load: true — образ загружается в Docker Engine раннера и виден следующим шагам Job,
-      # но публикуется только после проверки Trivy.
-      # type=gha хранит слои в кэше GitHub Actions между запусками Pipeline. mode=max сохраняет и слои
-      # стадии build (Gradle и зависимости), которых нет в итоговом образе. У каждого сервиса свой scope:
-      # с общим scope три сборки матрицы перезаписывали бы кэш друг друга
       - name: Build image (no push) with layer cache
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
