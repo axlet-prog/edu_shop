@@ -43,4 +43,6 @@ management:
 
 shop:
   worker:
-    processing-delay: ${PROCESSING_DELAY_MS:2000}
+    # Каждый заказ обрабатывается случайное время от min до max миллисекунд включительно
+    processing-delay-min: ${PROCESSING_DELAY_MIN_MS:1000}
+    processing-delay-max: ${PROCESSING_DELAY_MAX_MS:3000}

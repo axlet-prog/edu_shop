@@ -31,7 +31,7 @@ class OrderProcessorTest {
 	private final PrometheusRegistry registry = new PrometheusRegistry();
 
 	private final OrderProcessor processor =
-			new OrderProcessor(orders, new WorkerProperties(Duration.ZERO), registry);
+			new OrderProcessor(orders, new WorkerProperties(Duration.ZERO, Duration.ZERO), registry);
 
 	@Test
 	void marksOrderProcessingThenDone() throws Exception {

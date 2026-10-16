@@ -43,8 +43,10 @@ services:
     image: edu-shop/worker
     environment:
       <<: *app-env
-      # Задержку обработки можно поменять при запуске: PROCESSING_DELAY_MS=10000 docker compose up -d worker
-      PROCESSING_DELAY_MS: ${PROCESSING_DELAY_MS:-2000}
+      # Каждый заказ обрабатывается случайное время от MIN до MAX мс. Поменять при запуске:
+      #   PROCESSING_DELAY_MIN_MS=5000 PROCESSING_DELAY_MAX_MS=10000 docker compose up -d worker
+      PROCESSING_DELAY_MIN_MS: ${PROCESSING_DELAY_MIN_MS:-1000}
+      PROCESSING_DELAY_MAX_MS: ${PROCESSING_DELAY_MAX_MS:-3000}
     ports:
       - "9101:9101"
     depends_on:
