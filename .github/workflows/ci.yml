@@ -89,7 +89,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      # Публикация в ghcr.io токеном GITHUB_TOKEN
       packages: write
 
     strategy:
@@ -152,13 +151,9 @@ jobs:
       - name: Trivy full report
         run: trivy image --format table --output "trivy-report-${SERVICE}.txt" "${IMAGE}:${SHORT_SHA}"
 
-      # SBOM в формате CycloneDX: все пакеты образа (Alpine и jar-зависимости) с версиями и purl
       - name: Generate SBOM (CycloneDX)
         run: trivy image --format cyclonedx --output "sbom-${SERVICE}.cdx.json" "${IMAGE}:${SHORT_SHA}"
 
-      # Quality Gate: Pipeline останавливается, если в образе есть уязвимость HIGH или CRITICAL,
-      # для которой уже выпущено исправление. --ignore-unfixed отбрасывает уязвимости без патча:
-      # их нельзя устранить обновлением, и они валили бы почти каждую сборку
       - name: Trivy quality gate (HIGH, CRITICAL with fix)
         run: trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "${IMAGE}:${SHORT_SHA}"
 
@@ -170,8 +165,6 @@ jobs:
           path: trivy-report-${{ matrix.service }}.txt
           retention-days: 14
 
-      # SBOM хранится дольше отчёта: по нему проверяют, есть ли в уже выпущенном образе библиотека
-      # с новой уязвимостью, не сканируя образ заново
       - name: Upload SBOM
         if: always()
         uses: actions/upload-artifact@v7
