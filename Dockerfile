@@ -48,7 +48,6 @@ RUN java -Djarmode=tools -jar /app/app.jar extract --layers --destination /app/e
 
 
 # Рабочий образ: только JRE и приложение, без JDK, Gradle, исходников и сборочных зависимостей.
-# В alpine-образе есть wget, им пользуется healthcheck в docker-compose.yml
 FROM eclipse-temurin:25-jre-alpine
 RUN addgroup -S app && adduser -S -G app app
 WORKDIR /app

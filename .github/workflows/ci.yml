@@ -89,7 +89,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      # Публикация в ghcr.io токеном GITHUB_TOKEN
       packages: write
 
     strategy:
@@ -120,10 +119,10 @@ jobs:
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/${SERVICE}" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        uses: docker/setup-buildx-action@v4
 
       - name: Build image (no push) with layer cache
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        uses: docker/build-push-action@v7
         with:
           context: .
           build-args: |
@@ -142,7 +141,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
       - name: Set up Trivy
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        uses: aquasecurity/setup-trivy@v0.3.1
         with:
           version: v0.75.0
           cache: true
@@ -152,13 +151,9 @@ jobs:
       - name: Trivy full report
         run: trivy image --format table --output "trivy-report-${SERVICE}.txt" "${IMAGE}:${SHORT_SHA}"
 
-      # SBOM в формате CycloneDX: все пакеты образа (Alpine и jar-зависимости) с версиями и purl
       - name: Generate SBOM (CycloneDX)
         run: trivy image --format cyclonedx --output "sbom-${SERVICE}.cdx.json" "${IMAGE}:${SHORT_SHA}"
 
-      # Quality Gate: Pipeline останавливается, если в образе есть уязвимость HIGH или CRITICAL,
-      # для которой уже выпущено исправление. --ignore-unfixed отбрасывает уязвимости без патча:
-      # их нельзя устранить обновлением, и они валили бы почти каждую сборку
       - name: Trivy quality gate (HIGH, CRITICAL with fix)
         run: trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "${IMAGE}:${SHORT_SHA}"
 
@@ -170,8 +165,6 @@ jobs:
           path: trivy-report-${{ matrix.service }}.txt
           retention-days: 14
 
-      # SBOM хранится дольше отчёта: по нему проверяют, есть ли в уже выпущенном образе библиотека
-      # с новой уязвимостью, не сканируя образ заново
       - name: Upload SBOM
         if: always()
         uses: actions/upload-artifact@v7
@@ -184,7 +177,7 @@ jobs:
       # Без always() шаг выполняется только при успехе предыдущих, то есть после Quality Gate
       - name: Log in to GitHub Container Registry
         if: github.ref == 'refs/heads/main'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
