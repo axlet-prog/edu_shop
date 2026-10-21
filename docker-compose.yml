@@ -19,6 +19,7 @@ services:
       context: .
       args:
         MODULE: shop_api
+        PORT: 8080
     image: edu-shop/api
     environment: *app-env
     ports:
@@ -40,13 +41,12 @@ services:
       context: .
       args:
         MODULE: shop_worker
+        PORT: 9101
     image: edu-shop/worker
     environment:
       <<: *app-env
-      # Каждый заказ обрабатывается случайное время от MIN до MAX мс. Поменять при запуске:
-      #   PROCESSING_DELAY_MIN_MS=5000 PROCESSING_DELAY_MAX_MS=10000 docker compose up -d worker
-      PROCESSING_DELAY_MIN_MS: ${PROCESSING_DELAY_MIN_MS:-1000}
-      PROCESSING_DELAY_MAX_MS: ${PROCESSING_DELAY_MAX_MS:-3000}
+      # Задержку обработки можно поменять при запуске: PROCESSING_DELAY_MS=10000 docker compose up -d worker
+      PROCESSING_DELAY_MS: ${PROCESSING_DELAY_MS:-2000}
     ports:
       - "9101:9101"
     depends_on:
@@ -61,6 +61,7 @@ services:
       context: .
       args:
         MODULE: shop_exporter
+        PORT: 9102
     image: edu-shop/exporter
     environment:
       SHOP_API_URL: http://api:8080

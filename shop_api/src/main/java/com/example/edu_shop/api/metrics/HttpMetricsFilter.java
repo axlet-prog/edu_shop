@@ -43,7 +43,7 @@ public class HttpMetricsFilter extends OncePerRequestFilter {
 				.name("http_request_duration_seconds")
 				.help("HTTP request duration in seconds")
 				.labelNames("method", "route", "status")
-				// Стандартные бакеты клиентских библиотек Prometheus: от 5 мс до 10 с
+				// от 5 мс до 10 с
 				.classicUpperBounds(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10)
 				.classicOnly()
 				.register(registry);

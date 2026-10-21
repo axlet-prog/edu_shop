@@ -72,8 +72,8 @@ Prometheus ──remote_write──→ VictoriaMetrics
 |------------------------------------------|-----------|-------------------------------------------|-----------------------------------------------------------|
 | `shop_order_processing_duration_seconds` | Histogram | Когда Worker перевёл заказ в DONE         | Секунды от получения сообщения из RabbitMQ до статуса DONE |
 
-Бакеты от 0,1 с до 60 с. Каждый заказ обрабатывается случайное время от `PROCESSING_DELAY_MIN_MS` до
-`PROCESSING_DELAY_MAX_MS` (по умолчанию от 1 до 3 с), поэтому бакеты крупнее, чем у HTTP-запросов. Если заказ пропущен (его нет в базе или он уже DONE), время не записывается.
+Бакеты от 0,1 с до 60 с. Обработка длится не меньше `PROCESSING_DELAY_MS` (по умолчанию 2 с), поэтому
+бакеты крупнее, чем у HTTP-запросов. Если заказ пропущен (его нет в базе или он уже DONE), время не записывается.
 
 ## Метрики собственного exporter
 
@@ -207,8 +207,8 @@ sum(pg_stat_database_numbackends{datname="shop"})
 Ещё два запроса покрывают метрики Worker и хоста:
 
 ```promql
-# p95 времени обработки заказа в Worker: чуть меньше PROCESSING_DELAY_MAX_MS (при задержке 1–3 с около 2,9 с)
-histogram_quantile(0.95, sum by (le) (rate(shop_order_processing_duration_seconds_bucket[5m])))
+# Среднее время обработки заказа в Worker: чуть больше PROCESSING_DELAY_MS, к задержке добавляются два UPDATE в базе
+rate(shop_order_processing_duration_seconds_sum[5m]) / rate(shop_order_processing_duration_seconds_count[5m])
 
 # Загрузка CPU хоста в процентах: доля времени, когда процессоры не простаивали
 100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[1m])))
@@ -219,16 +219,17 @@ histogram_quantile(0.95, sum by (le) (rate(shop_order_processing_duration_second
 Задержку Worker-а можно увеличить без пересборки:
 
 ```bash
-PROCESSING_DELAY_MIN_MS=5000 PROCESSING_DELAY_MAX_MS=10000 docker compose up -d worker
+PROCESSING_DELAY_MS=10000 docker compose up -d worker
 ```
 
-Worker обрабатывает заказ в среднем (MIN + MAX) / 2 = 7,5 с. Если создавать заказы чаще, растут
-`rabbitmq_queue_messages_ready` и `shop_stats_orders_new`, а p95 из `shop_order_processing_duration_seconds`
-подходит к 10 секундам.
+Если при этом создавать заказы чаще, чем раз в 10 секунд, растут `rabbitmq_queue_messages_ready` и
+`shop_stats_orders_new`, а среднее время обработки из `shop_order_processing_duration_seconds` становится
+чуть больше 10 секунд.
 
-Границы удобно брать совпадающими с бакетами гистограммы (5 и 10 с): `histogram_quantile` считает значения
-внутри бакета распределёнными равномерно, и для равномерной задержки оценка перцентилей получается точной.
-Чтобы задержка была постоянной, задайте MIN и MAX одинаковыми.
+Задержка у всех заказов одинаковая, поэтому все наблюдения попадают в один бакет гистограммы: при 2 с это
+бакет от 2 до 3 с, при 10 с — от 10 до 20 с. `histogram_quantile` считает значения внутри бакета
+распределёнными равномерно, поэтому p95 получится у верхней границы бакета: около 2,95 с и 19,5 с.
+Время обработки Worker-а точнее показывает среднее `_sum / _count`.
 
 ## Вывод
 

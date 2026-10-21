@@ -9,8 +9,8 @@
 
 1. Клиент отправляет `POST /orders`, и API сохраняет заказ в PostgreSQL со статусом `NEW`.
 2. API публикует в RabbitMQ сообщение `{"order_id": 42}`.
-3. Worker получает сообщение и переводит заказ в `PROCESSING`. Затем он ждёт случайное время
-   от `PROCESSING_DELAY_MIN_MS` до `PROCESSING_DELAY_MAX_MS` и переводит заказ в `DONE`, заполняя `processed_at`.
+3. Worker получает сообщение и переводит заказ в `PROCESSING`. Затем он ждёт `PROCESSING_DELAY_MS`
+   и переводит заказ в `DONE`, заполняя `processed_at`.
 
 Стек: Java 25, Spring Boot 4, Spring Data JDBC, Liquibase, PostgreSQL, RabbitMQ.
 Мониторинг: Prometheus, VictoriaMetrics, node_exporter, cAdvisor, postgres_exporter, rabbitmq_prometheus
@@ -159,8 +159,7 @@ Prometheus (конфигурация в [`monitoring/prometheus/prometheus.yml`]
 | `RABBITMQ_HOST` / `RABBITMQ_PORT` | `localhost` / `5672` | API, Worker |
 | `RABBITMQ_USER` / `RABBITMQ_PASSWORD` | `shop` / `shop` | API, Worker |
 | `API_PORT`              | `8080`       | API              |
-| `PROCESSING_DELAY_MIN_MS` | `1000`     | Worker: минимальное время обработки одного заказа, мс |
-| `PROCESSING_DELAY_MAX_MS` | `3000`     | Worker: максимальное время обработки одного заказа, мс. Каждый заказ обрабатывается случайное время между MIN и MAX |
+| `PROCESSING_DELAY_MS`   | `2000`       | Worker: сколько миллисекунд обрабатывается один заказ |
 | `METRICS_PORT`          | `9101`       | Worker: порт ручки `/metrics` |
 | `EXPORTER_PORT`         | `9102`       | Exporter: порт ручки `/metrics` |
 | `SHOP_API_URL`          | `http://localhost:8080` | Exporter: адрес API, у которого он запрашивает `/internal/stats` |

@@ -12,22 +12,17 @@ spring:
     password: ${RABBITMQ_PASSWORD:shop}
     listener:
       simple:
-        # Берём из очереди по одному сообщению: необработанные заказы ждут в очереди (messages_ready),
-        # а не скапливаются в буфере Worker-а (messages_unacked)
         prefetch: 1
-        # Ошибку обработки (например, недоступна БД) повторяем, а потом отправляем сообщение в DLQ
         retry:
           enabled: true
           max-retries: 2
 
 server:
-  # Техническая ручка /metrics для Prometheus; пользовательских HTTP-ручек у Worker нет
   port: ${METRICS_PORT:9101}
 
 management:
   endpoints:
     web:
-      # Prometheus забирает метрики с /metrics, а не со стандартного /actuator/prometheus
       base-path: /
       exposure:
         include: prometheus
@@ -35,14 +30,9 @@ management:
         prometheus: metrics
   metrics:
     enable:
-      # HTTP-запросы к Worker — это только опросы /metrics, их встроенная метрика Spring не нужна
       http.server.requests: false
-      # Клиентские метрики RabbitMQ называются так же, как метрики самого брокера (rabbitmq_connections и др.)
-      # и путались бы с ними. Метрики RabbitMQ отдаёт брокер через плагин rabbitmq_prometheus
       rabbitmq: false
 
 shop:
   worker:
-    # Каждый заказ обрабатывается случайное время от min до max миллисекунд включительно
-    processing-delay-min: ${PROCESSING_DELAY_MIN_MS:1000}
-    processing-delay-max: ${PROCESSING_DELAY_MAX_MS:3000}
+    processing-delay: ${PROCESSING_DELAY_MS:2000}

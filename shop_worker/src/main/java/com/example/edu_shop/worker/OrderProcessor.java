@@ -1,6 +1,5 @@
 package com.example.edu_shop.worker;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
@@ -33,8 +32,6 @@ public class OrderProcessor {
 		this.processingDuration = Histogram.builder()
 				.name("shop_order_processing_duration_seconds")
 				.help("Time from receiving a message from RabbitMQ until the order is DONE")
-				// Обработка длится не меньше PROCESSING_DELAY_MIN_MS (по умолчанию от 1 до 3 с), поэтому бакеты
-				// крупнее, чем у HTTP-запросов: от 100 мс до минуты
 				.classicUpperBounds(0.1, 0.25, 0.5, 1, 2, 3, 5, 10, 20, 30, 60)
 				.classicOnly()
 				.register(registry);
@@ -48,10 +45,10 @@ public class OrderProcessor {
 			log.warn("Order {} not found or already done, skipping", orderId);
 			return;
 		}
-		// Имитация обработки: каждый заказ обрабатывается случайное время в заданных пределах
-		Duration delay = properties.randomProcessingDelay();
-		log.info("Order {} processing started, delay {} ms", orderId, delay.toMillis());
-		Thread.sleep(delay);
+		log.info("Order {} processing started", orderId);
+
+		// Имитация обработки
+		Thread.sleep(properties.processingDelay());
 
 		orderRepository.markDone(orderId, Instant.now().truncatedTo(ChronoUnit.MICROS));
 		processingDuration.observe(Unit.nanosToSeconds(System.nanoTime() - start));

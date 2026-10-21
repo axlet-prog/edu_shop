@@ -4,10 +4,11 @@
 .idea
 .claude
 .mcp.json
-.gradle
+**/.gradle
 **/build
 labs
 monitoring
 Dockerfile
+Dockerfile.*
 docker-compose.yml
 *.md

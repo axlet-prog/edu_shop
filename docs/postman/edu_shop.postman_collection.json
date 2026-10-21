@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "26025f5c-8a99-4f80-9dd5-198e158d9d6e",
     "name": "edu_shop: заказы и метрики",
-    "description": "Все ручки стенда edu_shop для тестирования и демонстрации лабораторной «Метрики и Prometheus».\n\nПеред запуском поднимите стенд: `docker compose up -d --build`. Адреса заданы в переменных коллекции (вкладка Variables), по умолчанию это порты из `docker-compose.yml` на localhost.\n\nПапки 1–7 можно запустить целиком через Run collection: у каждого запроса есть тесты. Результат PromQL-запросов виден таблицей во вкладке Visualize. Папка «8. Нагрузка» нужна для демонстрации роста очереди, её удобно запускать отдельно с несколькими итерациями.\n\nЕсли меняли `PROCESSING_DELAY_MAX_MS`, поменяйте и переменную `processingDelayMaxMs`: от неё зависит, сколько ждёт запрос «Получить заказ после обработки».",
+    "description": "Все ручки стенда edu_shop для тестирования и демонстрации лабораторной «Метрики и Prometheus».\n\nПеред запуском поднимите стенд: `docker compose up -d --build`. Адреса заданы в переменных коллекции (вкладка Variables), по умолчанию это порты из `docker-compose.yml` на localhost.\n\nПапки 1–7 можно запустить целиком через Run collection: у каждого запроса есть тесты. Результат PromQL-запросов виден таблицей во вкладке Visualize. Папка «8. Нагрузка» нужна для демонстрации роста очереди, её удобно запускать отдельно с несколькими итерациями.\n\nЕсли меняли `PROCESSING_DELAY_MS`, поменяйте и переменную `processingDelayMs`: от неё зависит, сколько ждёт запрос «Получить заказ после обработки».",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -112,7 +112,7 @@
                 "{{orderId}}"
               ]
             },
-            "description": "Перед запросом скрипт ждёт `processingDelayMaxMs` + 2 с, за это время Worker переводит заказ в DONE и заполняет `processed_at`. Если в очереди много заказов (например, после папки «Нагрузка»), заказ может не успеть обработаться."
+            "description": "Перед запросом скрипт ждёт `processingDelayMs` + 2 с, за это время Worker переводит заказ в DONE и заполняет `processed_at`. Если в очереди много заказов (например, после папки «Нагрузка»), заказ может не успеть обработаться."
           },
           "event": [
             {
@@ -120,8 +120,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "// Worker обрабатывает заказ не дольше processingDelayMaxMs миллисекунд (PROCESSING_DELAY_MAX_MS): ждём с запасом",
-                  "const delay = Number(pm.collectionVariables.get('processingDelayMaxMs')) + 2000;",
+                  "// Worker обрабатывает заказ processingDelayMs миллисекунд (PROCESSING_DELAY_MS): ждём с запасом",
+                  "const delay = Number(pm.collectionVariables.get('processingDelayMs')) + 2000;",
                   "setTimeout(() => {}, delay);"
                 ]
               }
@@ -877,7 +877,7 @@
                     "query"
                   ]
                 },
-                "description": "Чуть меньше `PROCESSING_DELAY_MAX_MS`: при задержке от 1 до 3 с около 2,9 с. Если за 5 минут не обработан ни один заказ, результат `NaN`.\n\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(shop_order_processing_duration_seconds_bucket[5m])))\n```",
+                "description": "Задержка у всех заказов одинаковая, поэтому все наблюдения попадают в один бакет, и p95 получается у его верхней границы: при `PROCESSING_DELAY_MS` = 2000 около 2,95 с. Если за 5 минут не обработан ни один заказ, результат `NaN`.\n\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(shop_order_processing_duration_seconds_bucket[5m])))\n```",
                 "body": {
                   "mode": "urlencoded",
                   "urlencoded": [
@@ -1600,7 +1600,7 @@
     },
     {
       "name": "8. Нагрузка",
-      "description": "Генерация заказов для демонстрации. Запустите папку через Collection Runner, например 30 итераций без задержки. Заказы создаются быстрее, чем Worker их обрабатывает (от `PROCESSING_DELAY_MIN_MS` до `PROCESSING_DELAY_MAX_MS` на заказ), поэтому через 15–30 с в Prometheus видно, как растут `rabbitmq_queue_messages_ready` и `shop_stats_orders_new`, а потом очередь разбирается.",
+      "description": "Генерация заказов для демонстрации. Запустите папку через Collection Runner, например 30 итераций без задержки. Заказы создаются быстрее, чем Worker их обрабатывает (`PROCESSING_DELAY_MS` на заказ), поэтому через 15–30 с в Prometheus видно, как растут `rabbitmq_queue_messages_ready` и `shop_stats_orders_new`, а потом очередь разбирается.",
       "item": [
         {
           "name": "Создать случайный заказ",
@@ -1695,8 +1695,8 @@
       "value": "http://localhost:8081"
     },
     {
-      "key": "processingDelayMaxMs",
-      "value": "3000"
+      "key": "processingDelayMs",
+      "value": "2000"
     },
     {
       "key": "orderId",
