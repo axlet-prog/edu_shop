@@ -81,3 +81,118 @@ jobs:
             */build/reports/tests/test/
             */build/reports/jacoco/test/
           retention-days: 14
+
+  image:
+    name: Image (${{ matrix.service }})
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      # Отчёт Trivy и SBOM нужны по каждому образу, даже если другой образ не прошёл Quality Gate
+      fail-fast: false
+      matrix:
+        include:
+          - service: api
+            module: shop_api
+            port: 8080
+          - service: worker
+            module: shop_worker
+            port: 9101
+          - service: exporter
+            module: shop_exporter
+            port: 9102
+
+    env:
+      SERVICE: ${{ matrix.service }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Image name and short SHA
+        run: |
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}/${SERVICE}" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image (no push) with layer cache
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          build-args: |
+            MODULE=${{ matrix.module }}
+            PORT=${{ matrix.port }}
+          push: false
+          load: true
+          tags: |
+            ${{ env.IMAGE }}:${{ env.SHORT_SHA }}
+            ${{ env.IMAGE }}:build-${{ github.run_number }}
+          # source связывает пакет в GHCR с репозиторием, revision — полный хэш коммита
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      - name: Set up Trivy
+        uses: aquasecurity/setup-trivy@v0.3.1
+        with:
+          version: v0.75.0
+          cache: true
+
+      # Полный отчёт: все уровни критичности, без порога, поэтому шаг не падает.
+      # Отчёт выгружается в артефакт, даже если следующие шаги упадут
+      - name: Trivy full report
+        run: trivy image --format table --output "trivy-report-${SERVICE}.txt" "${IMAGE}:${SHORT_SHA}"
+
+      - name: Generate SBOM (CycloneDX)
+        run: trivy image --format cyclonedx --output "sbom-${SERVICE}.cdx.json" "${IMAGE}:${SHORT_SHA}"
+
+      - name: Trivy quality gate (HIGH, CRITICAL with fix)
+        run: trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "${IMAGE}:${SHORT_SHA}"
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trivy-report-${{ matrix.service }}
+          path: trivy-report-${{ matrix.service }}.txt
+          retention-days: 14
+
+      - name: Upload SBOM
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sbom-${{ matrix.service }}
+          path: sbom-${{ matrix.service }}.cdx.json
+          retention-days: 90
+
+      # Публикуется только main: на Pull Request образ собирается и проверяется, но в реестр не попадает.
+      # Без always() шаг выполняется только при успехе предыдущих, то есть после Quality Gate
+      - name: Log in to GitHub Container Registry
+        if: github.ref == 'refs/heads/main'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Публикуется тот самый образ, который проверил Trivy: он уже есть в Docker Engine (load: true),
+      # пересобирать его не нужно. --all-tags отправляет оба тега, у них один и тот же digest
+      - name: Push image
+        if: github.ref == 'refs/heads/main'
+        run: |
+          docker push --all-tags "$IMAGE"
+          {
+            echo "### Published image: ${SERVICE}"
+            echo
+            echo "- \`${IMAGE}:${SHORT_SHA}\`"
+            echo "- \`${IMAGE}:build-${GITHUB_RUN_NUMBER}\`"
+            echo "- digest: \`$(docker inspect --format '{{index .RepoDigests 0}}' "${IMAGE}:${SHORT_SHA}")\`"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
