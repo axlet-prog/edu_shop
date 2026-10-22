@@ -15,6 +15,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
@@ -35,12 +36,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * API целиком на настоящих PostgreSQL и RabbitMQ: миграции Liquibase, SQL-запросы и сообщение для Worker.
+ * API целиком на настоящих PostgreSQL, RabbitMQ и Redis: миграции Liquibase, SQL-запросы и сообщение для Worker.
  * Контейнеры поднимает Testcontainers, поэтому для запуска нужен Docker.
+ * Здесь контейнеры static, то есть общие для всех тестов класса: Spring-контекст поднимается один раз,
+ * а независимость тестов обеспечивает очистка данных в {@link #cleanUp()}.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
-@Testcontainers
+@Testcontainers(parallel = true)
 class OrderApiIntegrationTest {
 
 	@Container
@@ -50,6 +53,10 @@ class OrderApiIntegrationTest {
 	@Container
 	@ServiceConnection
 	static RabbitMQContainer rabbitmq = new RabbitMQContainer("rabbitmq:4-alpine");
+
+	@Container
+	@ServiceConnection(name = "redis")
+	static GenericContainer<?> redis = new GenericContainer<>("redis:7-alpine").withExposedPorts(6379);
 
 	@Autowired
 	private MockMvc mvc;

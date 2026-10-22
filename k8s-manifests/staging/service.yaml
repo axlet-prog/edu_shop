@@ -1,0 +1,12 @@
+# Адрес API внутри кластера: к нему обращается exporter (SHOP_API_URL) и другие сервисы staging
+apiVersion: v1
+kind: Service
+metadata:
+  name: edu-shop-api
+  namespace: staging
+spec:
+  selector:
+    app: edu-shop-api
+  ports:
+    - port: 8080
+      targetPort: 8080
