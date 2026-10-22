@@ -3,7 +3,6 @@ spring:
     name: shop-exporter
   http:
     clients:
-      # Prometheus ждёт ответа exporter-а 10 с (scrape_timeout), поэтому API должно ответить быстрее
       connect-timeout: 2s
       read-timeout: 5s
 
@@ -13,7 +12,6 @@ server:
 management:
   endpoints:
     web:
-      # Prometheus забирает метрики с /metrics, а не со стандартного /actuator/prometheus
       base-path: /
       exposure:
         include: prometheus
@@ -21,7 +19,6 @@ management:
         prometheus: metrics
   metrics:
     enable:
-      # HTTP-запросы к exporter — это только опросы /metrics, их встроенная метрика Spring не нужна
       http.server.requests: false
 
 shop:

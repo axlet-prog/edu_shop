@@ -22,7 +22,6 @@ server:
 management:
   endpoints:
     web:
-      # Prometheus забирает метрики с /metrics, а не со стандартного /actuator/prometheus
       base-path: /
       exposure:
         include: prometheus
@@ -30,9 +29,5 @@ management:
         prometheus: metrics
   metrics:
     enable:
-      # Встроенную HTTP-метрику Spring заменяют http_requests_total и http_request_duration_seconds
-      # из HttpMetricsFilter, поэтому её отключаем, чтобы не дублировать
       http.server.requests: false
-      # Клиентские метрики RabbitMQ называются так же, как метрики самого брокера (rabbitmq_connections и др.)
-      # и путались бы с ними. Метрики RabbitMQ отдаёт брокер через плагин rabbitmq_prometheus
       rabbitmq: false

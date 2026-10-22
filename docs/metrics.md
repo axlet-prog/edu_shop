@@ -207,8 +207,8 @@ sum(pg_stat_database_numbackends{datname="shop"})
 Ещё два запроса покрывают метрики Worker и хоста:
 
 ```promql
-# p95 времени обработки заказа в Worker: близко к PROCESSING_DELAY_MS
-histogram_quantile(0.95, sum by (le) (rate(shop_order_processing_duration_seconds_bucket[5m])))
+# Среднее время обработки заказа в Worker: чуть больше PROCESSING_DELAY_MS, к задержке добавляются два UPDATE в базе
+rate(shop_order_processing_duration_seconds_sum[5m]) / rate(shop_order_processing_duration_seconds_count[5m])
 
 # Загрузка CPU хоста в процентах: доля времени, когда процессоры не простаивали
 100 * (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[1m])))
@@ -223,7 +223,13 @@ PROCESSING_DELAY_MS=10000 docker compose up -d worker
 ```
 
 Если при этом создавать заказы чаще, чем раз в 10 секунд, растут `rabbitmq_queue_messages_ready` и
-`shop_stats_orders_new`, а p95 из `shop_order_processing_duration_seconds` подходит к 10 секундам.
+`shop_stats_orders_new`, а среднее время обработки из `shop_order_processing_duration_seconds` становится
+чуть больше 10 секунд.
+
+Задержка у всех заказов одинаковая, поэтому все наблюдения попадают в один бакет гистограммы: при 2 с это
+бакет от 2 до 3 с, при 10 с — от 10 до 20 с. `histogram_quantile` считает значения внутри бакета
+распределёнными равномерно, поэтому p95 получится у верхней границы бакета: около 2,95 с и 19,5 с.
+Время обработки Worker-а точнее показывает среднее `_sum / _count`.
 
 ## Вывод
 

@@ -11,4 +11,13 @@ import org.springframework.boot.convert.DurationUnit;
  */
 @ConfigurationProperties("shop.worker")
 public record WorkerProperties(@DurationUnit(ChronoUnit.MILLIS) Duration processingDelay) {
+
+	public WorkerProperties {
+		// Ошибку в настройках лучше увидеть при старте Worker-а, а не на первом заказе
+		if (processingDelay.isNegative()) {
+			throw new IllegalArgumentException("Processing delay must not be negative, got %d ms"
+					.formatted(processingDelay.toMillis()));
+		}
+	}
+
 }

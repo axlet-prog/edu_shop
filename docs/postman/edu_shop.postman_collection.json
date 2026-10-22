@@ -877,7 +877,7 @@
                     "query"
                   ]
                 },
-                "description": "Близко к `PROCESSING_DELAY_MS`. Если за 5 минут не обработан ни один заказ, результат `NaN`.\n\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(shop_order_processing_duration_seconds_bucket[5m])))\n```",
+                "description": "Задержка у всех заказов одинаковая, поэтому все наблюдения попадают в один бакет, и p95 получается у его верхней границы: при `PROCESSING_DELAY_MS` = 2000 около 2,95 с. Если за 5 минут не обработан ни один заказ, результат `NaN`.\n\n```promql\nhistogram_quantile(0.95, sum by (le) (rate(shop_order_processing_duration_seconds_bucket[5m])))\n```",
                 "body": {
                   "mode": "urlencoded",
                   "urlencoded": [

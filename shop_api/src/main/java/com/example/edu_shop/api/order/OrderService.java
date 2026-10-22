@@ -23,44 +23,40 @@ public class OrderService {
 
 	private static final Logger log = LoggerFactory.getLogger(OrderService.class);
 
-	private final OrderRepository orders;
+	private final OrderRepository orderRepository;
 
 	private final RabbitTemplate rabbitTemplate;
 
-	private final Counter ordersCreated;
+	private final Counter ordersCreatedCounter;
 
-	public OrderService(OrderRepository orders, RabbitTemplate rabbitTemplate, PrometheusRegistry registry) {
-		this.orders = orders;
+	public OrderService(OrderRepository orderRepository, RabbitTemplate rabbitTemplate, PrometheusRegistry registry) {
+		this.orderRepository = orderRepository;
 		this.rabbitTemplate = rabbitTemplate;
-		this.ordersCreated = Counter.builder()
+		this.ordersCreatedCounter = Counter.builder()
 				.name("shop_orders_created_total")
 				.help("Orders created since API start")
 				.register(registry);
 	}
 
-	/**
-	 * Сначала заказ сохраняется (и коммитится) в PostgreSQL, и только потом уходит сообщение в RabbitMQ,
-	 * поэтому Worker всегда найдёт заказ в базе. Если RabbitMQ недоступен, запрос завершится ошибкой,
-	 * а заказ останется в статусе NEW. Такой заказ не учитывается в shop_orders_created_total.
-	 */
 	public Order create(BigDecimal amount, int itemsCount) {
-		// Приводим значения к тому виду, в котором их вернёт PostgreSQL: NUMERIC(12, 2) и микросекунды
 		BigDecimal normalizedAmount = amount.setScale(2);
 		Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
-		Order order = orders.save(Order.newOrder(normalizedAmount, itemsCount, now));
-		rabbitTemplate.convertAndSend(OrderMessaging.EXCHANGE, OrderMessaging.ROUTING_KEY,
+		Order order = orderRepository.save(Order.newOrder(normalizedAmount, itemsCount, now));
+		rabbitTemplate.convertAndSend(
+				OrderMessaging.EXCHANGE,
+				OrderMessaging.ROUTING_KEY,
 				new OrderCreatedMessage(order.id()));
-		ordersCreated.inc();
+		ordersCreatedCounter.inc();
 		log.info("Order {} created", order.id());
 		return order;
 	}
 
 	public Order get(long id) {
-		return orders.findById(id).orElseThrow(() -> new OrderNotFoundException(id));
+		return orderRepository.findById(id).orElseThrow(() -> new OrderNotFoundException(id));
 	}
 
 	public List<Order> findAll() {
-		return orders.findAll(Sort.by("id"));
+		return orderRepository.findAll(Sort.by("id"));
 	}
 
 }
