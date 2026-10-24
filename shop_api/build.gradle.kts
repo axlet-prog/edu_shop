@@ -50,11 +50,7 @@ testing {
 			}
 			targets.configureEach {
 				testTask.configure {
-					// Параллельность средствами JUnit: тестовые классы выполняются одновременно в потоках одной JVM
-					// (число потоков = числу ядер), тесты внутри класса последовательно, как файлы у Jest.
-					// Пока один класс ждёт запуска своих контейнеров, другие уже работают.
-					// Отдельные JVM (maxParallelForks) проверены и не ускоряют: каждая заново прогревается.
-					// Без параллельности (аналог --runInBand): ./gradlew integrationTest -PintegrationTest.parallel=false
+					// Без параллельности: ./gradlew integrationTest -PintegrationTest.parallel=false
 					val parallel = providers.gradleProperty("integrationTest.parallel").orNull?.toBoolean() ?: true
 					systemProperty("junit.jupiter.execution.parallel.enabled", parallel)
 					systemProperty("junit.jupiter.execution.parallel.mode.default", "same_thread")

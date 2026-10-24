@@ -115,7 +115,7 @@ class OrderApiIntegrationTest {
 
 		mvc.perform(get("/internal/stats"))
 				.andExpect(status().isOk())
-				.andExpect(jsonPath("$.orders_new").value(1))
+				.andExpect(jsonPath("$.orders_new").value(100))
 				.andExpect(jsonPath("$.orders_processing").value(1))
 				.andExpect(jsonPath("$.orders_done").value(1))
 				.andExpect(jsonPath("$.last_processed_at").value(processedAt.toString()));
