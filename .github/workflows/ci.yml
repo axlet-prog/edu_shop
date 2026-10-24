@@ -345,7 +345,7 @@ jobs:
           export TAG="${GITHUB_SHA::7}"
           yq -i '(select(.kind == "Deployment") | .spec.template.spec.containers[].image) |= sub(":[^:]+$", ":" + strenv(TAG))' \
             "$MANIFEST"
-         
+  
          images=$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[].image' "$MANIFEST")
           echo "$images"
           if echo "$images" | grep -v ":${TAG}\$"; then

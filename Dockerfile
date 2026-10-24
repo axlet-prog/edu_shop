@@ -33,7 +33,8 @@ RUN java -Djarmode=tools -jar /app/app.jar extract --layers --destination /app/e
 
 
 FROM eclipse-temurin:25-jre-alpine
-RUN addgroup -S app && adduser -S -G app app
+# Исправления безопасности Alpine, вышедшие после сборки базового образа (иначе их находит Trivy)
+RUN apk upgrade --no-cache && addgroup -S app && adduser -S -G app app
 WORKDIR /app
 COPY --from=build /app/extracted/dependencies/ ./
 COPY --from=build /app/extracted/spring-boot-loader/ ./
