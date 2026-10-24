@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
         - name: api
-          image: ghcr.io/axlet-prog/edu_shop-staging/api:e902d86
+          image: ghcr.io/axlet-prog/edu_shop-staging/api:b3e74d0
           ports:
             - containerPort: 8080
           env:
@@ -64,7 +64,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: ghcr.io/axlet-prog/edu_shop-staging/worker:e902d86
+          image: ghcr.io/axlet-prog/edu_shop-staging/worker:b3e74d0
           ports:
             - containerPort: 9101
           env:
@@ -95,7 +95,7 @@ spec:
     spec:
       containers:
         - name: exporter
-          image: ghcr.io/axlet-prog/edu_shop-staging/exporter:e902d86
+          image: ghcr.io/axlet-prog/edu_shop-staging/exporter:b3e74d0
           ports:
             - containerPort: 9102
           env:
