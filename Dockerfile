@@ -43,4 +43,9 @@ COPY --from=build /app/extracted/application/ ./
 USER app
 ARG PORT=8080
 EXPOSE ${PORT}
+# Намеренная поломка /health для демонстрации автоматического отката (только shop_api, остальным модулям не важна).
+# Стабильный и «сломанный» образы собираются из одного Dockerfile:
+#   docker build --build-arg MODULE=shop_api --build-arg CHAOS_MODE=true -t localhost:5001/edu-shop-api:broken .
+ARG CHAOS_MODE=false
+ENV CHAOS_MODE=${CHAOS_MODE}
 ENTRYPOINT ["java", "-jar", "app.jar"]

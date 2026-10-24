@@ -1,0 +1,117 @@
+# ЛР4, раздел 5.2: Argo Rollouts с canary-стратегией вместо Deployment из 5.1.
+# Раздел 5.3: анализ доли 5xx по k8s/analysistemplate.yaml с автоматическим откатом.
+# Deployment нужно удалить: у него та же метка app: edu-shop-api, и Service с PodMonitor видели бы поды обоих.
+# Service edu-shop-api из deployment.yaml остаётся, через него идёт нагрузка в 5.5.
+#   kubectl delete deployment edu-shop-api -n staging
+#   kubectl apply -f k8s/analysistemplate.yaml
+#   kubectl apply -f k8s/rollout.yaml
+#   kubectl argo rollouts get rollout edu-shop-api -n staging --watch
+#   kubectl argo rollouts set image edu-shop-api api=localhost:5001/edu-shop-api:v2 -n staging
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: edu-shop-api
+  namespace: staging
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: edu-shop-api
+  # Шаблон пода тот же, что в k8s/deployment.yaml
+  template:
+    metadata:
+      labels:
+        # На эту метку настроен PodMonitor (k8s/podmonitor.yaml)
+        app: edu-shop-api
+    spec:
+      # Иначе Kubernetes добавит переменные сервисов rabbitmq и redis: RABBITMQ_PORT=tcp://10.96...:5672
+      # совпадает по имени с переменной из application.yaml, и API падает при старте
+      enableServiceLinks: false
+      containers:
+        - name: api
+          image: localhost:5001/edu-shop-api:stable
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_HOST
+              value: postgres
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+            - name: REDIS_HOST
+              value: redis
+          envFrom:
+            - secretRef:
+                name: edu-shop-credentials
+          # JVM стартует около 10 с, а когда 6 подов запускаются одновременно, дольше. Пока startupProbe
+          # не пройдёт, livenessProbe не проверяется и не перезапускает под, который ещё не успел стартовать
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 10
+          # Под API занимает до 260 MiB (container_memory_working_set_bytes в Prometheus).
+          # Лимит не даёт 6-8 подам во время обновления занять всю память ноутбука
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+  strategy:
+    canary:
+      stableService: edu-shop-api-stable
+      canaryService: edu-shop-api-canary
+      # Фоновый анализ: AnalysisRun стартует со шага 1 (пауза после setWeight: 10, canary-под уже работает)
+      # и идёт до конца выката. При Failed выкат прерывается: canary уменьшается до 0,
+      # весь трафик возвращается на stable, Rollout становится Degraded
+      analysis:
+        templates:
+          - templateName: error-rate-check
+        startingStep: 1
+      # trafficRouting (Istio, Nginx и т. п.) не настроен, поэтому вес задаётся числом подов:
+      # при 6 репликах шаг 10% даёт один canary-под, то есть около 1/6 трафика через Service edu-shop-api
+      steps:
+        - setWeight: 10
+        - pause: { duration: 1m }
+        - setWeight: 25
+        - pause: { duration: 1m }
+        - setWeight: 50
+        - pause: { duration: 1m }
+        - setWeight: 100
+---
+# Селекторы stable- и canary-сервисов одинаковые. Во время выката Argo Rollouts дописывает в них
+# rollouts-pod-template-hash нужной ревизии, и каждый сервис видит только поды своей версии
+apiVersion: v1
+kind: Service
+metadata:
+  name: edu-shop-api-stable
+  namespace: staging
+spec:
+  selector:
+    app: edu-shop-api
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edu-shop-api-canary
+  namespace: staging
+spec:
+  selector:
+    app: edu-shop-api
+  ports:
+    - port: 80
+      targetPort: 8080

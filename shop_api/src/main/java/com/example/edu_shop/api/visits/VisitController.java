@@ -17,6 +17,7 @@ public class VisitController {
 
 	@GetMapping("/visits")
 	public VisitsResponse visits() {
+		System.out.println("visited");
 		return visitService.registerVisit();
 	}
 
