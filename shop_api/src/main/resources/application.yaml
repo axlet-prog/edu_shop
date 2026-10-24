@@ -10,6 +10,10 @@ spring:
     port: ${RABBITMQ_PORT:5672}
     username: ${RABBITMQ_USER:shop}
     password: ${RABBITMQ_PASSWORD:shop}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
   jackson:
     property-naming-strategy: SNAKE_CASE
   mvc:
@@ -31,3 +35,7 @@ management:
     enable:
       http.server.requests: false
       rabbitmq: false
+
+shop:
+  visits:
+    cache-ttl: ${VISITS_CACHE_TTL:10s}

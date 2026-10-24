@@ -36,7 +36,9 @@ tasks.withType<Test>().configureEach {
 		events("failed")
 		exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
 	}
-	finalizedBy("jacocoTestReport")
+	// Каждый набор тестов завершается своим отчётом: test -> jacocoTestReport,
+	// integrationTest -> jacocoIntegrationTestReport. Иначе интеграционный прогон строил бы отчёт unit-тестов
+	finalizedBy("jacoco${name.replaceFirstChar { it.uppercase() }}Report")
 }
 
 tasks.withType<JacocoReport>().configureEach {

@@ -1,0 +1,103 @@
+# Желаемое состояние окружения staging (GitOps, модель pull).
+# Тег образов меняет job update-manifest в CI отдельным коммитом в main. Пайплайн к кластеру не подключается:
+# изменения применяет отдельная система (ArgoCD или вручную `kubectl apply -f k8s-manifests/staging/`).
+# PostgreSQL, RabbitMQ и Redis в staging разворачиваются отдельно и доступны по именам postgres, rabbitmq, redis.
+# Логины и пароли лежат в Secret edu-shop-credentials, который создаётся в кластере и в Git не хранится:
+#   kubectl -n staging create secret generic edu-shop-credentials \
+#     --from-literal=DB_USER=... --from-literal=DB_PASSWORD=... \
+#     --from-literal=RABBITMQ_USER=... --from-literal=RABBITMQ_PASSWORD=...
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edu-shop-api
+  namespace: staging
+  labels:
+    app: edu-shop-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: edu-shop-api
+  template:
+    metadata:
+      labels:
+        app: edu-shop-api
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/axlet-prog/edu_shop-staging/api:e902d86
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_HOST
+              value: postgres
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+            - name: REDIS_HOST
+              value: redis
+          envFrom:
+            - secretRef:
+                name: edu-shop-credentials
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 5
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edu-shop-worker
+  namespace: staging
+  labels:
+    app: edu-shop-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: edu-shop-worker
+  template:
+    metadata:
+      labels:
+        app: edu-shop-worker
+    spec:
+      containers:
+        - name: worker
+          image: ghcr.io/axlet-prog/edu_shop-staging/worker:e902d86
+          ports:
+            - containerPort: 9101
+          env:
+            - name: DB_HOST
+              value: postgres
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+          envFrom:
+            - secretRef:
+                name: edu-shop-credentials
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edu-shop-exporter
+  namespace: staging
+  labels:
+    app: edu-shop-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: edu-shop-exporter
+  template:
+    metadata:
+      labels:
+        app: edu-shop-exporter
+    spec:
+      containers:
+        - name: exporter
+          image: ghcr.io/axlet-prog/edu_shop-staging/exporter:e902d86
+          ports:
+            - containerPort: 9102
+          env:
+            - name: SHOP_API_URL
+              value: http://edu-shop-api:8080

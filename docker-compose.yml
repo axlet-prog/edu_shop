@@ -21,13 +21,17 @@ services:
         MODULE: shop_api
         PORT: 8080
     image: edu-shop/api
-    environment: *app-env
+    environment:
+      <<: *app-env
+      REDIS_HOST: redis
     ports:
       - "8080:8080"
     depends_on:
       postgres:
         condition: service_healthy
       rabbitmq:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
@@ -98,6 +102,15 @@ services:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
+      retries: 10
+
+  # Кэш счётчика посещений API (GET /visits)
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
       retries: 10
 
   # --- Мониторинг ---
