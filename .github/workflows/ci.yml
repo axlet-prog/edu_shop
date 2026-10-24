@@ -250,131 +250,126 @@ jobs:
             echo "- digest: \`$(docker inspect --format '{{index .RepoDigests 0}}' "${IMAGE}:${SHORT_SHA}")\`"
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
-#  # Продвижение в staging по принципу Build Once, Deploy Many: образ, который прошёл тесты, Trivy и был
-#  # опубликован в job image, копируется в staging-пространство имён без пересборки
-#  promote-to-staging:
-#    name: Promote to staging (${{ matrix.service }})
-#    # needs: image — ждёт все три образа матрицы; если хоть один не опубликован, job пропускается.
-#    # Условие без always() неявно включает success(): упавший или пропущенный job выше = skipped здесь
-#    needs: image
-#    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-#    runs-on: ubuntu-latest
-#    timeout-minutes: 10
-#    permissions:
-#      contents: read
-#      packages: write
-#
-#    strategy:
-#      matrix:
-#        service: [api, worker, exporter]
-#
-#    env:
-#      SERVICE: ${{ matrix.service }}
-#
-#    steps:
-#      # Тег тот же, что в job image: короткий хэш коммита
-#      - name: Source and staging image names
-#        run: |
-#          TAG="${GITHUB_SHA::7}"
-#          echo "SOURCE=ghcr.io/${GITHUB_REPOSITORY,,}/${SERVICE}:${TAG}" >> "$GITHUB_ENV"
-#          echo "TARGET=ghcr.io/${GITHUB_REPOSITORY,,}-staging/${SERVICE}:${TAG}" >> "$GITHUB_ENV"
-#
-#      # skopeo уже установлен на ubuntu-latest. Ему не нужен Docker Daemon: он работает с реестрами напрямую
-#      - name: Log in to GitHub Container Registry (skopeo)
-#        env:
-#          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-#        run: |
-#          skopeo --version
-#          echo "$GHCR_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-#
-#      # Копируются манифест и слои как есть. --preserve-digests: если бы копия получила другой digest
-#      # (то есть другой образ), skopeo завершился бы с ошибкой
-#      - name: Copy image to staging without rebuild
-#        run: skopeo copy --all --preserve-digests "docker://${SOURCE}" "docker://${TARGET}"
-#
-#      # Зелёный skopeo copy ещё не доказывает, что образ в staging тот самый: проверяем реестр напрямую
-#      - name: Verify staging image
-#        run: |
-#          skopeo inspect "docker://${TARGET}"
-#          source_digest=$(skopeo inspect --format '{{.Digest}}' "docker://${SOURCE}")
-#          target_digest=$(skopeo inspect --format '{{.Digest}}' "docker://${TARGET}")
-#          if [ "$source_digest" != "$target_digest" ]; then
-#            echo "::error::Staging image digest ${target_digest} differs from source ${source_digest}"
-#            exit 1
-#          fi
-#          {
-#            echo "### Promoted to staging: ${SERVICE}"
-#            echo
-#            echo "- from \`${SOURCE}\`"
-#            echo "- to \`${TARGET}\`"
-#            echo "- digest (same for both): \`${target_digest}\`"
-#          } | tee -a "$GITHUB_STEP_SUMMARY"
-#
-#  # GitOps: пайплайн не подключается к кластеру, а меняет желаемое состояние в Git.
-#  # Применяет изменения отдельная система (ArgoCD или kubectl apply)
-#  update-manifest:
-#    name: Update staging manifest (GitOps)
-#    needs: promote-to-staging
-#    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-#    runs-on: ubuntu-latest
-#    timeout-minutes: 10
-#    permissions:
-#      # Без этого GITHUB_TOKEN только читает репозиторий, и git push завершится ошибкой 403
-#      contents: write
-#
-#    env:
-#      MANIFEST: k8s-manifests/staging/deployment.yaml
-#      YQ_VERSION: v4.54.1
-#      YQ_SHA256: 8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
-#
-#    steps:
-#      # Манифест лежит в том же репозитории, отдельный git clone не нужен
-#      - name: Checkout
-#        uses: actions/checkout@v7
-#
-#      # Фиксированная версия yq с проверкой контрольной суммы, а не «последняя»
-#      - name: Install yq
-#        run: |
-#          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
-#          echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum --check
-#          sudo chmod +x /usr/local/bin/yq
-#          yq --version
-#
-#      # Меняется только тег, имя образа в каждом Deployment остаётся прежним
-#      - name: Update image tag in staging manifest
-#        run: |
-#          export TAG="${GITHUB_SHA::7}"
-#          yq -i '(select(.kind == "Deployment") | .spec.template.spec.containers[].image) |= sub(":[^:]+$", ":" + strenv(TAG))' \
-#            "$MANIFEST"
-#          # yq с опечаткой в пути завершается без ошибки и ничего не меняет, поэтому проверяем содержимое:
-#          # каждый образ в манифесте должен указывать на новый тег
-#          images=$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[].image' "$MANIFEST")
-#          echo "$images"
-#          if echo "$images" | grep -v ":${TAG}\$"; then
-#            echo "::error::Not every image in ${MANIFEST} points to ${TAG}"
-#            exit 1
-#          fi
-#
-#      # Push с GITHUB_TOKEN не запускает новый workflow, поэтому коммит бота не зацикливает CI.
-#      # Запуски на main идут по одному (concurrency), но пока шёл пайплайн, в main мог прийти коммит
-#      # человека: тогда коммит бота переставляется поверх него (pull --rebase)
-#      - name: Commit and push
-#        run: |
-#          TAG="${GITHUB_SHA::7}"
-#          if git diff --quiet -- "$MANIFEST"; then
-#            echo "Manifest already points to ${TAG}, nothing to commit"
-#            exit 0
-#          fi
-#          git config user.name "github-actions[bot]"
-#          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-#          git add "$MANIFEST"
-#          git commit -m "Deploy ${TAG} to staging"
-#          git pull --rebase origin main
-#          git push origin HEAD:main
-#          {
-#            echo "### Staging manifest updated to \`${TAG}\`"
-#            echo
-#            echo '```diff'
-#            git show --format= -- "$MANIFEST"
-#            echo '```'
-#          } | tee -a "$GITHUB_STEP_SUMMARY"
+  # Продвижение в staging по принципу Build Once, Deploy Many: образ, который прошёл тесты, Trivy и был
+  # опубликован в job image, копируется в staging-пространство имён без пересборки
+  promote-to-staging:
+    name: Promote to staging (${{ matrix.service }})
+    # needs: image — ждёт все три образа матрицы; если хоть один не опубликован, job пропускается.
+    # Условие без always() неявно включает success(): упавший или пропущенный job выше = skipped здесь
+    needs: image
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        service: [api, worker, exporter]
+
+    env:
+      SERVICE: ${{ matrix.service }}
+
+    steps:
+      # Тег тот же, что в job image: короткий хэш коммита
+      - name: Source and staging image names
+        run: |
+          TAG="${GITHUB_SHA::7}"
+          echo "SOURCE=ghcr.io/${GITHUB_REPOSITORY,,}/${SERVICE}:${TAG}" >> "$GITHUB_ENV"
+          echo "TARGET=ghcr.io/${GITHUB_REPOSITORY,,}-staging/${SERVICE}:${TAG}" >> "$GITHUB_ENV"
+
+      # skopeo уже установлен на ubuntu-latest. Ему не нужен Docker Daemon: он работает с реестрами напрямую
+      - name: Log in to GitHub Container Registry (skopeo)
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          skopeo --version
+          echo "$GHCR_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      # Копируются манифест и слои как есть. --preserve-digests: если бы копия получила другой digest
+      # (то есть другой образ), skopeo завершился бы с ошибкой
+      - name: Copy image to staging without rebuild
+        run: skopeo copy --all --preserve-digests "docker://${SOURCE}" "docker://${TARGET}"
+
+      # Зелёный skopeo copy ещё не доказывает, что образ в staging тот самый: проверяем реестр напрямую
+      - name: Verify staging image
+        run: |
+          skopeo inspect "docker://${TARGET}"
+          source_digest=$(skopeo inspect --format '{{.Digest}}' "docker://${SOURCE}")
+          target_digest=$(skopeo inspect --format '{{.Digest}}' "docker://${TARGET}")
+          if [ "$source_digest" != "$target_digest" ]; then
+            echo "::error::Staging image digest ${target_digest} differs from source ${source_digest}"
+            exit 1
+          fi
+          {
+            echo "### Promoted to staging: ${SERVICE}"
+            echo
+            echo "- from \`${SOURCE}\`"
+            echo "- to \`${TARGET}\`"
+            echo "- digest (same for both): \`${target_digest}\`"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # GitOps: пайплайн не подключается к кластеру, а меняет желаемое состояние в Git.
+  update-manifest:
+    name: Update staging manifest (GitOps)
+    needs: promote-to-staging
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      # Без этого GITHUB_TOKEN только читает репозиторий, и git push завершится ошибкой 403
+      contents: write
+
+    env:
+      MANIFEST: k8s-manifests/staging/deployment.yaml
+      YQ_VERSION: v4.54.1
+      YQ_SHA256: 8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f
+
+    steps:
+      # Манифест лежит в том же репозитории, отдельный git clone не нужен
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # Фиксированная версия yq с проверкой контрольной суммы, а не «последняя»
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum --check
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      # Меняется только тег, имя образа в каждом Deployment остаётся прежним
+      - name: Update image tag in staging manifest
+        run: |
+          export TAG="${GITHUB_SHA::7}"
+          yq -i '(select(.kind == "Deployment") | .spec.template.spec.containers[].image) |= sub(":[^:]+$", ":" + strenv(TAG))' \
+            "$MANIFEST"
+         
+         images=$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[].image' "$MANIFEST")
+          echo "$images"
+          if echo "$images" | grep -v ":${TAG}\$"; then
+            echo "::error::Not every image in ${MANIFEST} points to ${TAG}"
+            exit 1
+          fi
+
+      - name: Commit and push
+        run: |
+          TAG="${GITHUB_SHA::7}"
+          if git diff --quiet -- "$MANIFEST"; then
+            echo "Manifest already points to ${TAG}, nothing to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$MANIFEST"
+          git commit -m "Deploy ${TAG} to staging"
+          git pull --rebase origin main
+          git push origin HEAD:main
+          {
+            echo "### Staging manifest updated to \`${TAG}\`"
+            echo
+            echo '```diff'
+            git show --format= -- "$MANIFEST"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
