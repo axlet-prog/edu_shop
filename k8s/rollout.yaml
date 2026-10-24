@@ -1,5 +1,6 @@
 # ЛР4, раздел 5.2: Argo Rollouts с canary-стратегией вместо Deployment из 5.1.
 # Раздел 5.3: анализ доли 5xx по k8s/analysistemplate.yaml с автоматическим откатом.
+# Раздел 5.4: уведомление в Slack об откате по k8s/notifications.yaml.
 # Deployment нужно удалить: у него та же метка app: edu-shop-api, и Service с PodMonitor видели бы поды обоих.
 # Service edu-shop-api из deployment.yaml остаётся, через него идёт нагрузка в 5.5.
 #   kubectl delete deployment edu-shop-api -n staging
@@ -12,6 +13,10 @@ kind: Rollout
 metadata:
   name: edu-shop-api
   namespace: staging
+  annotations:
+    # Подписка на триггер on-rollout-aborted через service slack из k8s/notifications.yaml.
+    # Значение пустое: канал задан самим Slack-вебхуком
+    notifications.argoproj.io/subscribe.on-rollout-aborted.slack: ""
 spec:
   replicas: 6
   selector:
