@@ -346,7 +346,7 @@ jobs:
           yq -i '(select(.kind == "Deployment") | .spec.template.spec.containers[].image) |= sub(":[^:]+$", ":" + strenv(TAG))' \
             "$MANIFEST"
   
-         images=$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[].image' "$MANIFEST")
+          images=$(yq -N 'select(.kind == "Deployment") | .spec.template.spec.containers[].image' "$MANIFEST")
           echo "$images"
           if echo "$images" | grep -v ":${TAG}\$"; then
             echo "::error::Not every image in ${MANIFEST} points to ${TAG}"
