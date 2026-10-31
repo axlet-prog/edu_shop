@@ -1,0 +1,23 @@
+# Откуда Prometheus (kube-prometheus-stack) собирает метрики API в namespace staging.
+# Метка release должна совпадать с именем Helm-релиза (monitoring), иначе Prometheus проигнорирует PodMonitor.
+# Селектор app: edu-shop-api совпадает с метками подов Deployment (5.1) и Rollout (5.2).
+# Порт указан номером (8080, а не 3000 из задания: так слушает Spring Boot), потому что в манифестах API
+# containerPort не именован.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: edu-shop-api
+  namespace: staging
+  labels:
+    release: monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - staging
+  selector:
+    matchLabels:
+      app: edu-shop-api
+  podMetricsEndpoints:
+    - targetPort: 8080
+      path: /metrics
+      interval: 15s

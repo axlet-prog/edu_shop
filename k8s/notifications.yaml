@@ -1,0 +1,32 @@
+# ЛР4, раздел 5.4: уведомление в Slack об автоматическом откате. Отправляет сам контроллер Argo Rollouts,
+# отдельного контроллера уведомлений с версии 1.1 нет.
+# URL вебхука хранится в Secret argo-rollouts-notification-secret (ключ slack-webhook-url), в Git его нет.
+# install.yaml уже создал этот Secret пустым, поэтому kubectl create из задания падает с AlreadyExists:
+#   kubectl create secret generic argo-rollouts-notification-secret -n argo-rollouts \
+#     --from-literal=slack-webhook-url='https://hooks.slack.com/services/XXX/YYY/ZZZ' \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#   kubectl apply -f k8s/notifications.yaml
+# Rollout подписан на триггер аннотацией в k8s/rollout.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argo-rollouts-notification-configmap
+  namespace: argo-rollouts
+data:
+  service.webhook.slack: |
+    url: $slack-webhook-url
+    headers:
+      - name: Content-Type
+        value: application/json
+  template.rollout-degraded: |
+    webhook:
+      slack:
+        method: POST
+        body: |
+          {"text": ":rotating_light: Rollout {{.rollout.metadata.name}} ({{.rollout.metadata.namespace}}) откачен автоматически: доля ошибок 5xx превысила допустимый порог"}
+  # В задании trigger.on-rollout-degraded с when: rollout.status.phase == 'Degraded', такой триггер не сработает.
+  # Argo Rollouts проверяет триггер, только когда записывает событие, и имя триггера берёт из его reason
+  # (RolloutAborted → on-rollout-aborted). События RolloutDegraded нет, Degraded бывает только в status.phase.
+  # При неудачном анализе контроллер прерывает выкат с событием RolloutAborted, поэтому условие when не нужно
+  trigger.on-rollout-aborted: |
+    - send: [rollout-degraded]

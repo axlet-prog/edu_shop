@@ -1,0 +1,29 @@
+# ЛР4, раздел 5.3: автоматическое решение о продолжении или откате canary по доле ответов 5xx.
+# Подключён в k8s/rollout.yaml (strategy.canary.analysis), применять до него:
+#   kubectl apply -f k8s/analysistemplate.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: error-rate-check
+  namespace: staging
+spec:
+  metrics:
+    - name: error-rate
+      # count не задан: измерения идут каждые 30 с до конца выката, на всех шагах от 10% до 100%
+      interval: 30s
+      # Порог 1% из задания
+      successCondition: result[0] < 0.01
+      # Одна неудача прощается (случайный всплеск), анализ становится Failed на второй
+      failureLimit: 1
+      provider:
+        prometheus:
+          address: http://monitoring-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+          # Доля 5xx за минуту по всем подам приложения, без отделения canary от stable (упрощение задания).
+          # Метка status, а не status_code: так её называет HttpMetricsFilter (ЛР1).
+          # Пока ни один под не отдал 5xx, рядов status=~"5.." нет и числитель пустой. Без or vector(0)
+          # пустым был бы весь результат, result[0] дал бы ошибку измерения, и откатилась бы исправная версия.
+          # Знаменатель не нулевой и без нагрузки: пробы kubelet на /health и сбор /metrics тоже считаются
+          query: |
+            (sum(rate(http_requests_total{status=~"5.."}[1m])) or vector(0))
+            /
+            sum(rate(http_requests_total[1m]))

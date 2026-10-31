@@ -1,0 +1,83 @@
+# ЛР4, раздел 5.1: обычный Deployment API с Rolling Update в кластере kind cicd-lab4.
+# Не путать с k8s-manifests/staging/deployment.yaml (GitOps из ЛР3, образы из GHCR): там Deployment с тем же
+# именем, поэтому в этот кластер те манифесты не применяются.
+#   kubectl apply -f k8s/deployment.yaml
+#   kubectl set image deployment/edu-shop-api api=localhost:5001/edu-shop-api:v2 -n staging
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edu-shop-api
+  namespace: staging
+spec:
+  replicas: 6
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 2
+  selector:
+    matchLabels:
+      app: edu-shop-api
+  template:
+    metadata:
+      labels:
+        # На эту метку настроен PodMonitor (k8s/podmonitor.yaml)
+        app: edu-shop-api
+    spec:
+      # Иначе Kubernetes добавит переменные сервисов rabbitmq и redis: RABBITMQ_PORT=tcp://10.96...:5672
+      # совпадает по имени с переменной из application.yaml, и API падает при старте
+      enableServiceLinks: false
+      containers:
+        - name: api
+          image: localhost:5001/edu-shop-api:stable
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_HOST
+              value: postgres
+            - name: RABBITMQ_HOST
+              value: rabbitmq
+            - name: REDIS_HOST
+              value: redis
+          envFrom:
+            - secretRef:
+                name: edu-shop-credentials
+          # JVM стартует около 10 с, а когда 6 подов запускаются одновременно, дольше. Пока startupProbe
+          # не пройдёт, livenessProbe не проверяется и не перезапускает под, который ещё не успел стартовать
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 10
+          # Под API занимает до 260 MiB (container_memory_working_set_bytes в Prometheus).
+          # Лимит не даёт 6-8 подам во время обновления занять всю память ноутбука
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+---
+# Общий Service для обеих версий: в 5.5 через него идёт нагрузка (curl http://edu-shop-api/health)
+apiVersion: v1
+kind: Service
+metadata:
+  name: edu-shop-api
+  namespace: staging
+spec:
+  selector:
+    app: edu-shop-api
+  ports:
+    - port: 80
+      targetPort: 8080
