@@ -4,7 +4,6 @@
 
 ```
 Клиент → HTTP → API ──→ PostgreSQL
-                 ├────→ Redis (кэш счётчика посещений)
                  └────→ RabbitMQ ──→ Worker ──→ PostgreSQL
 ```
 
@@ -13,7 +12,7 @@
 3. Worker получает сообщение и переводит заказ в `PROCESSING`. Затем он ждёт `PROCESSING_DELAY_MS`
    и переводит заказ в `DONE`, заполняя `processed_at`.
 
-Стек: Java 25, Spring Boot 4, Spring Data JDBC, Liquibase, PostgreSQL, RabbitMQ, Redis.
+Стек: Java 25, Spring Boot 4, Spring Data JDBC, Liquibase, PostgreSQL, RabbitMQ.
 Мониторинг: Prometheus, VictoriaMetrics, node_exporter, cAdvisor, postgres_exporter, rabbitmq_prometheus
 и собственный exporter (см. [Метрики](#метрики)).
 
@@ -30,13 +29,13 @@
 
 ## Запуск стенда в Docker
 
-`docker-compose.yml` поднимает всё сразу: API, Worker, exporter, PostgreSQL, RabbitMQ, Redis и мониторинг.
+`docker-compose.yml` поднимает всё сразу: API, Worker, exporter, PostgreSQL, RabbitMQ и мониторинг.
 Образы своих компонентов собираются из одного [`Dockerfile`](Dockerfile), модуль задаёт аргумент `MODULE`
 (см. [Docker-образы](#docker-образы)).
 
 ```bash
 docker compose up -d --build
-docker compose ps          # api и worker стартуют после healthcheck PostgreSQL, RabbitMQ, Redis и API
+docker compose ps          # api и worker стартуют после healthcheck PostgreSQL, RabbitMQ и API
 docker compose down        # остановить; с флагом -v удалятся и данные
 ```
 
@@ -61,7 +60,6 @@ docker run -d --name shop-postgres -p 5432:5432 \
   -e POSTGRES_DB=shop -e POSTGRES_USER=shop -e POSTGRES_PASSWORD=shop postgres:17-alpine
 docker run -d --name shop-rabbitmq -p 5672:5672 -p 15672:15672 \
   -e RABBITMQ_DEFAULT_USER=shop -e RABBITMQ_DEFAULT_PASS=shop rabbitmq:4-management-alpine
-docker run -d --name shop-redis -p 6379:6379 redis:7-alpine
 
 ./gradlew :shop_api:bootRun
 ./gradlew :shop_worker:bootRun     # в другом терминале
@@ -81,18 +79,16 @@ docker run -d --name shop-redis -p 6379:6379 redis:7-alpine
 | Unit           | `*/src/test`                | `./gradlew test jacocoTestCoverageVerification`          | Ничего, Docker не нужен |
 | Интеграционные | `shop_api/src/integrationTest` | `./gradlew integrationTest jacocoIntegrationTestCoverageVerification` | Запущенный Docker |
 
-Интеграционные тесты поднимают настоящие PostgreSQL, Redis и RabbitMQ через Testcontainers
+Интеграционные тесты поднимают настоящие PostgreSQL и RabbitMQ через Testcontainers
 на случайных портах и удаляют контейнеры после теста, даже если он упал:
 
 - `OrderApiIntegrationTest` — API целиком: заказы, сообщение для Worker, `/internal/stats`, `/metrics`.
-  Контейнеры общие на класс, данные очищаются перед каждым тестом;
-- `VisitsDatabaseIntegrationTest`, `VisitsCacheIntegrationTest` — `GET /visits`. Для каждого теста
-  поднимаются новые PostgreSQL и Redis и новое приложение (общая часть в `VisitsIntegrationTestSupport`).
+  Контейнеры общие на класс, данные очищаются перед каждым тестом.
 
 Тестовые классы выполняются параллельно в потоках JUnit, тесты внутри класса — последовательно.
 Без параллельности (например, чтобы сравнить время): `./gradlew integrationTest -PintegrationTest.parallel=false`.
 
-Порог покрытия JaCoCo (80% строк и ветвлений) разделён между уровнями: код, который работает с базой, Redis
+Порог покрытия JaCoCo (80% строк и ветвлений) разделён между уровнями: код, который работает с базой
 и сборкой Spring-контекста, проверяется интеграционными тестами и считается только в их пороге,
 остальной код — в пороге unit-тестов. Список классов — `integrationTestedClasses` в
 [`shop_api/build.gradle.kts`](shop_api/build.gradle.kts).
@@ -206,7 +202,6 @@ git log -p -1 -- k8s-manifests/staging/deployment.yaml
 | `GET /orders/{id}`     | Получить один заказ                                         |
 | `GET /orders`          | Получить все заказы                                         |
 | `GET /health`          | Проверить, что API запущено                                 |
-| `GET /visits`          | Счётчик посещений: запись в PostgreSQL, результат кэшируется в Redis на 10 секунд (`source`: `db` или `cache`) |
 | `GET /internal/stats`  | Количество заказов по статусам и `last_processed_at` в JSON |
 | `GET /metrics`         | Метрики API в формате Prometheus                            |
 
@@ -266,8 +261,6 @@ Prometheus (конфигурация в [`monitoring/prometheus/prometheus.yml`]
 | `RABBITMQ_HOST` / `RABBITMQ_PORT` | `localhost` / `5672` | API, Worker |
 | `RABBITMQ_USER` / `RABBITMQ_PASSWORD` | `shop` / `shop` | API, Worker |
 | `API_PORT`              | `8080`       | API              |
-| `REDIS_HOST` / `REDIS_PORT` | `localhost` / `6379` | API |
-| `VISITS_CACHE_TTL`      | `10s`        | API: сколько счётчик посещений живёт в Redis |
 | `PROCESSING_DELAY_MS`   | `2000`       | Worker: сколько миллисекунд обрабатывается один заказ |
 | `METRICS_PORT`          | `9101`       | Worker: порт ручки `/metrics` |
 | `EXPORTER_PORT`         | `9102`       | Exporter: порт ручки `/metrics` |

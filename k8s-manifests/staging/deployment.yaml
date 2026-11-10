@@ -1,7 +1,7 @@
 # Желаемое состояние окружения staging (GitOps, модель pull).
 # Тег образов меняет job update-manifest в CI отдельным коммитом в main. Пайплайн к кластеру не подключается:
 # изменения применяет отдельная система (ArgoCD или вручную `kubectl apply -f k8s-manifests/staging/`).
-# PostgreSQL, RabbitMQ и Redis в staging разворачиваются отдельно и доступны по именам postgres, rabbitmq, redis.
+# PostgreSQL и RabbitMQ в staging разворачиваются отдельно и доступны по именам postgres и rabbitmq.
 # Логины и пароли лежат в Secret edu-shop-credentials, который создаётся в кластере и в Git не хранится:
 #   kubectl -n staging create secret generic edu-shop-credentials \
 #     --from-literal=DB_USER=... --from-literal=DB_PASSWORD=... \
@@ -33,8 +33,6 @@ spec:
               value: postgres
             - name: RABBITMQ_HOST
               value: rabbitmq
-            - name: REDIS_HOST
-              value: redis
           envFrom:
             - secretRef:
                 name: edu-shop-credentials

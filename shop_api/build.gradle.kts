@@ -16,8 +16,6 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-webmvc")
 	implementation("org.springframework.boot:spring-boot-starter-validation")
 	implementation("org.springframework.boot:spring-boot-starter-liquibase")
-	// Кэш счётчика посещений (GET /visits)
-	implementation("org.springframework.boot:spring-boot-starter-data-redis")
 	// Actuator отдаёт /metrics. Свои метрики пишем клиентом Prometheus, Micrometer добавляет метрики JVM
 	implementation("org.springframework.boot:spring-boot-starter-actuator")
 	implementation("io.micrometer:micrometer-registry-prometheus")
@@ -30,7 +28,7 @@ dependencies {
 
 // Unit-тесты лежат в src/test и запускаются `./gradlew test` без Docker.
 // Интеграционные тесты лежат в src/integrationTest и запускаются `./gradlew integrationTest`:
-// они поднимают PostgreSQL, Redis и RabbitMQ через Testcontainers, поэтому нужен Docker.
+// они поднимают PostgreSQL и RabbitMQ через Testcontainers, поэтому нужен Docker.
 // Testcontainers подключён только к интеграционным тестам, в unit-тестах его нет даже на classpath.
 testing {
 	suites {
@@ -74,16 +72,13 @@ configurations.named("integrationTestRuntimeOnly") {
 	extendsFrom(configurations.testRuntimeOnly.get())
 }
 
-// Порог покрытия разделён между уровнями тестов. Код из этого списка (SQL-запросы, Redis, сборка
+// Порог покрытия разделён между уровнями тестов. Код из этого списка (SQL-запросы, сборка
 // Spring-контекста и ручки без собственной логики) целенаправленно проверяется интеграционными тестами,
 // поэтому unit-порог его не учитывает, а интеграционный порог (те же 80%) считается только по нему.
 val integrationTestedClasses = listOf(
 	"com/example/edu_shop/ApiApplication*",
 	"com/example/edu_shop/api/metrics/MetricsConfiguration*",
 	"com/example/edu_shop/api/stats/**",
-	"com/example/edu_shop/api/visits/VisitController*",
-	"com/example/edu_shop/api/visits/VisitService*",
-	"com/example/edu_shop/api/visits/VisitsResponse*",
 )
 val mainClasses = sourceSets.main.map { it.output.classesDirs.asFileTree }
 val unitScope = mainClasses.map { it.matching { exclude(integrationTestedClasses) } }
