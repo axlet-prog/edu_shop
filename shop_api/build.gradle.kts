@@ -77,7 +77,7 @@ configurations.named("integrationTestRuntimeOnly") {
 // поэтому unit-порог его не учитывает, а интеграционный порог (те же 80%) считается только по нему.
 val integrationTestedClasses = listOf(
 	"com/example/edu_shop/ApiApplication*",
-	"com/example/edu_shop/api/metrics/MetricsConfiguration*",
+	"com/example/edu_shop/api/filter/MetricsConfiguration*",
 	"com/example/edu_shop/api/stats/**",
 )
 val mainClasses = sourceSets.main.map { it.output.classesDirs.asFileTree }

@@ -1,5 +1,6 @@
 package com.example.edu_shop.api.metrics;
 
+import com.example.edu_shop.api.filter.HttpMetricsFilter;
 import io.prometheus.metrics.model.registry.PrometheusRegistry;
 import jakarta.servlet.ServletException;
 import org.junit.jupiter.api.Test;

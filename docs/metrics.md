@@ -41,7 +41,7 @@ Prometheus ──remote_write──→ VictoriaMetrics
 
 ## Метрики API
 
-Считаются в коде API в момент обработки запроса. Код: [`HttpMetricsFilter`](../shop_api/src/main/java/com/example/edu_shop/api/metrics/HttpMetricsFilter.java)
+Считаются в коде API в момент обработки запроса. Код: [`HttpMetricsFilter`](../shop_api/src/main/java/com/example/edu_shop/api/filter/HttpMetricsFilter.java)
 и [`OrderService`](../shop_api/src/main/java/com/example/edu_shop/api/order/OrderService.java).
 
 | Метрика                         | Тип       | Метки                     | Когда обновляется                                    |

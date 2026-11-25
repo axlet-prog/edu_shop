@@ -1,4 +1,6 @@
 spring:
+  main:
+    banner-mode: off
   application:
     name: shop-worker
   datasource:
@@ -19,6 +21,17 @@ spring:
 
 server:
   port: ${METRICS_PORT:9101}
+
+logging:
+  structured:
+    format:
+      console: logstash
+    json:
+      add:
+        service: worker
+      rename:
+        "[@timestamp]": timestamp
+      exclude: "@version,level_value,thread_name,logger_name"
 
 management:
   endpoints:
