@@ -1,6 +1,4 @@
-package com.example.edu_shop.api.metrics;
-
-import java.io.IOException;
+package com.example.edu_shop.api.filter;
 
 import io.prometheus.metrics.core.metrics.Counter;
 import io.prometheus.metrics.core.metrics.Histogram;
@@ -11,7 +9,8 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.web.filter.OncePerRequestFilter;
-import org.springframework.web.servlet.HandlerMapping;
+
+import java.io.IOException;
 
 /**
  * Считает HTTP-метрики API: {@code http_requests_total} и {@code http_request_duration_seconds}
@@ -22,12 +21,6 @@ import org.springframework.web.servlet.HandlerMapping;
  * {@code route="/**"}: этот шаблон у обработчика статических ресурсов Spring Boot.
  */
 public class HttpMetricsFilter extends OncePerRequestFilter {
-
-	/**
-	 * Метка route, если Spring MVC отклонил запрос ещё при поиске обработчика и шаблон пути неизвестен.
-	 * Например, путь есть, но метод не тот: {@code POST /health} → 405.
-	 */
-	static final String UNKNOWN_ROUTE = "UNKNOWN";
 
 	private final Counter requests;
 
@@ -43,7 +36,6 @@ public class HttpMetricsFilter extends OncePerRequestFilter {
 				.name("http_request_duration_seconds")
 				.help("HTTP request duration in seconds")
 				.labelNames("method", "route", "status")
-				// от 5 мс до 10 с
 				.classicUpperBounds(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10)
 				.classicOnly()
 				.register(registry);
@@ -60,16 +52,9 @@ public class HttpMetricsFilter extends OncePerRequestFilter {
 		} finally {
 			// Необработанное исключение Tomcat превратит в ответ 500 уже после выхода из фильтра
 			int status = failed ? HttpServletResponse.SC_INTERNAL_SERVER_ERROR : response.getStatus();
-			String[] labels = {request.getMethod(), route(request), String.valueOf(status)};
+			String[] labels = {request.getMethod(), FilterUtils.route(request), String.valueOf(status)};
 			requests.labelValues(labels).inc();
 			duration.labelValues(labels).observe(Unit.nanosToSeconds(System.nanoTime() - start));
 		}
 	}
-
-	private static String route(HttpServletRequest request) {
-		// Атрибут выставляет Spring MVC, когда находит обработчик запроса
-		Object pattern = request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
-		return pattern != null ? pattern.toString() : UNKNOWN_ROUTE;
-	}
-
 }

@@ -111,12 +111,12 @@ jobs:
         run: |
           docker ps -a --filter label=org.testcontainers=true --format 'table {{.Image}}\t{{.Names}}\t{{.Status}}'
           leftovers=$(docker ps -aq --filter label=org.testcontainers=true --filter ancestor=postgres:17-alpine \
-            --filter ancestor=redis:7-alpine --filter ancestor=rabbitmq:4-alpine)
+            --filter ancestor=rabbitmq:4-alpine)
           if [ -n "$leftovers" ]; then
             echo "::error::Testcontainers left containers behind"
             exit 1
           fi
-          echo "No PostgreSQL, Redis or RabbitMQ test containers left"
+          echo "No PostgreSQL or RabbitMQ test containers left"
 
       - name: Coverage summary
         if: always()

@@ -1,5 +1,5 @@
 # Инфраструктура API в namespace staging: PostgreSQL (схему создаёт Liquibase при старте API, без базы API
-# не запустится), RabbitMQ (POST /orders) и Redis (GET /visits). Имена сервисов те же, что в k8s-manifests/staging.
+# не запустится) и RabbitMQ (POST /orders). Имена сервисов те же, что в k8s-manifests/staging.
 # Данные хранятся в контейнере и пропадают при его пересоздании: для учебного кластера этого достаточно.
 # Логины и пароли берутся из Secret, который в Git не хранится:
 #   kubectl -n staging create secret generic edu-shop-credentials \
@@ -118,46 +118,3 @@ spec:
   ports:
     - port: 5672
       targetPort: 5672
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: redis
-  namespace: staging
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: redis
-  template:
-    metadata:
-      labels:
-        app: redis
-    spec:
-      containers:
-        - name: redis
-          image: redis:7-alpine
-          ports:
-            - containerPort: 6379
-          readinessProbe:
-            exec:
-              command: ["redis-cli", "ping"]
-            periodSeconds: 5
-          resources:
-            requests:
-              cpu: 50m
-              memory: 16Mi
-            limits:
-              memory: 128Mi
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: redis
-  namespace: staging
-spec:
-  selector:
-    app: redis
-  ports:
-    - port: 6379
-      targetPort: 6379

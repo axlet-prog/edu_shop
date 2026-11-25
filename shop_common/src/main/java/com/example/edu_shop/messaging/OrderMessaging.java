@@ -23,6 +23,12 @@ public class OrderMessaging {
 
 	public static final String QUEUE = "orders.processing";
 
+	/** Заголовок сообщения, в котором API передаёт Worker-у request_id исходного HTTP-запроса. */
+	public static final String REQUEST_ID_HEADER = "x-request-id";
+
+	/** Ключ MDC и имя поля request_id в JSON-логах API и Worker. */
+	public static final String REQUEST_ID_LOG_KEY = "request_id";
+
 	/** Сюда попадают сообщения, которые Worker не смог обработать после всех повторов. */
 	public static final String DEAD_LETTER_QUEUE = QUEUE + ".dlq";
 

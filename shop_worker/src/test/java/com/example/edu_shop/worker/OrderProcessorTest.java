@@ -5,13 +5,16 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.concurrent.atomic.AtomicReference;
 
 import io.prometheus.metrics.expositionformats.PrometheusTextFormatWriter;
 import io.prometheus.metrics.model.registry.PrometheusRegistry;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.slf4j.MDC;
 
 import com.example.edu_shop.messaging.OrderCreatedMessage;
+import com.example.edu_shop.messaging.OrderMessaging;
 import com.example.edu_shop.order.OrderRepository;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -37,7 +40,7 @@ class OrderProcessorTest {
 	void marksOrderProcessingThenDone() throws Exception {
 		given(orders.markProcessing(42L)).willReturn(true);
 
-		processor.process(new OrderCreatedMessage(42L));
+		processor.process(new OrderCreatedMessage(42L), null);
 
 		InOrder inOrder = inOrder(orders);
 		inOrder.verify(orders).markProcessing(42L);
@@ -51,11 +54,26 @@ class OrderProcessorTest {
 	void skipsOrderThatIsMissingOrAlreadyDone() throws Exception {
 		given(orders.markProcessing(42L)).willReturn(false);
 
-		processor.process(new OrderCreatedMessage(42L));
+		processor.process(new OrderCreatedMessage(42L), null);
 
 		verify(orders, never()).markDone(anyLong(), any());
 		// Время обработки записывается только для заказов, которые дошли до DONE
 		assertThat(scrape()).contains("shop_order_processing_duration_seconds_count 0");
+	}
+
+	@Test
+	void keepsRequestIdInMdcOnlyWhileProcessing() throws Exception {
+		AtomicReference<String> requestIdDuringProcessing = new AtomicReference<>();
+		given(orders.markProcessing(42L)).willAnswer(invocation -> {
+			requestIdDuringProcessing.set(MDC.get(OrderMessaging.REQUEST_ID_LOG_KEY));
+			return true;
+		});
+
+		processor.process(new OrderCreatedMessage(42L), "req-1");
+
+		assertThat(requestIdDuringProcessing).hasValue("req-1");
+		// Поток слушателя переиспользуется, поэтому после обработки request_id не должен остаться в MDC
+		assertThat(MDC.get(OrderMessaging.REQUEST_ID_LOG_KEY)).isNull();
 	}
 
 	/** Метрики в том виде, в каком их увидит Prometheus на /metrics. */

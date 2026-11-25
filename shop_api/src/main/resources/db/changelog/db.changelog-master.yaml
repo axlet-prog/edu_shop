@@ -2,6 +2,3 @@ databaseChangeLog:
   - include:
       file: changes/001-create-orders.sql
       relativeToChangelogFile: true
-  - include:
-      file: changes/002-create-visits.sql
-      relativeToChangelogFile: true

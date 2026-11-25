@@ -18,11 +18,6 @@ spec:
       provider:
         prometheus:
           address: http://monitoring-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
-          # Доля 5xx за минуту по всем подам приложения, без отделения canary от stable (упрощение задания).
-          # Метка status, а не status_code: так её называет HttpMetricsFilter (ЛР1).
-          # Пока ни один под не отдал 5xx, рядов status=~"5.." нет и числитель пустой. Без or vector(0)
-          # пустым был бы весь результат, result[0] дал бы ошибку измерения, и откатилась бы исправная версия.
-          # Знаменатель не нулевой и без нагрузки: пробы kubelet на /health и сбор /metrics тоже считаются
           query: |
             (sum(rate(http_requests_total{status=~"5.."}[1m])) or vector(0))
             /
